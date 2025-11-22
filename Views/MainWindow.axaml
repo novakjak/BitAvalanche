@@ -24,8 +24,8 @@
         <ScrollViewer Grid.Row="1">
             <ItemsControl ItemsSource="{Binding Torrents}">
                 <ItemsControl.ItemTemplate>
-                    <DataTemplate DataType="vm:TorrentViewModel">
-                        <Grid ColumnDefinitions="auto, *, *">
+                    <DataTemplate DataType="vm:TorrentTaskViewModel">
+                        <Grid ColumnDefinitions="*,*,*,*">
                             <TextBlock Text="{Binding Name}" Grid.Column="0"/>
                             <TextBlock Text="{Binding PercentComplete}" Grid.Column="1"/>
                             <Slider Minimum="0" Maximum="100" Value="{Binding PercentComplete, Mode=OneWay}" IsEnabled="False" Grid.Column="2"/>
