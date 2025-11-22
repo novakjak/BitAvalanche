@@ -8,7 +8,6 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Platform.Storage;
-using bittorrent.Services;
 using BencodeNET.Parsing;
 using BT = BencodeNET.Torrents;
 

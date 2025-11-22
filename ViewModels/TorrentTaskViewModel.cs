@@ -16,7 +16,8 @@ public partial class TorrentTaskViewModel : ViewModelBase
 
     public TorrentTaskViewModel(BT.Torrent t)
     {
-        _task = new TorrentTask(t);
         _name = t.DisplayName;
+        _task = new TorrentTask(t);
+        _task.Start();
     }
 }
