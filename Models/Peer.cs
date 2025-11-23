@@ -20,4 +20,9 @@ public class Peer
         Port = port;
         PeerId = peerId;
     }
+
+    public override string ToString()
+    {
+        return $"{Ip}:{Port}";
+    }
 }

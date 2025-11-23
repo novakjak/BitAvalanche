@@ -1,5 +1,6 @@
 using System;
 using System.Linq;
+using System.Text;
 using System.Collections;
 using System.Collections.Generic;
 using System.Net;
@@ -17,7 +18,7 @@ public class TorrentTask
 {
     private static readonly HttpClient client = new();
 
-    public BT.Torrent Torrent { get; private set; }
+    public readonly BT.Torrent Torrent;
     public int PeerCount { get; private set; } = 0;
     public int Uploaded { get; private set; } = 0;
     public int Downloaded { get; private set; } = 0;
@@ -25,7 +26,7 @@ public class TorrentTask
 
 
     private Thread? _thread;
-    private string _peerId = Util.GenerateRandomString(20);
+    private byte[] _peerId = Encoding.ASCII.GetBytes(Util.GenerateRandomString(20));
 
     public void Start()
     {
@@ -77,36 +78,45 @@ public class TorrentTask
             return;
         }
         var peers = ParsePeers(body["peers"]);
-        if (peers.Count() == 0)
-            Console.WriteLine("no peers");
         foreach (var p in peers)
             Console.WriteLine(p);
+        var connections = Task.WhenEach(peers.Select(
+            p => PeerConnection.CreateAsync(p, Torrent.OriginalInfoHashBytes, _peerId)
+        ));
+        await DistributeWorkToPeers(connections);
 
+    }
+
+    private async Task DistributeWorkToPeers(IAsyncEnumerable<Task<PeerConnection>> peers)
+    {
+        var downloadedPieces = new BitArray(Torrent.NumberOfPieces);
     }
 
     private static IEnumerable<Peer> ParsePeers(IBObject peers)
     {
         if (peers is BString s)
-            return ParsePeerString(s);
+            return ParsePeers(s);
         if (peers is BList l)
-            return ParsePeerList(l);
+            return ParsePeers(l);
         throw new ParseException("Peers object must be either a dictionary or a list.");
     }
 
-    private static IEnumerable<Peer> ParsePeerString(BString peers)
+    private static IEnumerable<Peer> ParsePeers(BString peers)
     {
         var res = new List<Peer>();
         var buf = peers.Value;
         for (int i = 0; i < peers.Length / 6; i++)
         {
             var addr = new IPAddress(buf.Slice(i * 6, 4).ToArray());
-            var port = BitConverter.ToInt16(buf.Slice(i * 6 + 4, 2).ToArray(), 0);
+            var port = IPAddress.NetworkToHostOrder(
+                BitConverter.ToInt16(buf.Slice(i * 6 + 4, 2).ToArray(), 0)
+            );
             res.Add(new Peer(addr, port, null));
         }
         return res;
     }
 
-    private static IEnumerable<Peer> ParsePeerList(BList peersList)
+    private static IEnumerable<Peer> ParsePeers(BList peersList)
     {
         if (peersList is null)
         {

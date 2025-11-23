@@ -19,4 +19,12 @@ public static class Util
         }
         return s;
     }
+
+	public static byte[] GetNetworkOrderBytes(UInt32 number)
+	{
+		var bytes = BitConverter.GetBytes(number);
+		if (BitConverter.IsLittleEndian)
+			Array.Reverse(bytes);
+		return bytes;
+	}
 }

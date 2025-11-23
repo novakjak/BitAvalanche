@@ -12,10 +12,14 @@ public class PeerConnection
     public byte[] InfoHash { get; private set; }
     public byte[] PeerId { get; private set; }
 
+    private bool _choked = true;
+    private bool _interested = false;
+
     private readonly TcpClient _client;
 
     private PeerConnection(Peer peer, byte[] infoHash, byte[] peerId)
     {
+        Console.WriteLine(new KeepAlive());
         if (infoHash.Length != 20)
         {
             throw new ArgumentException("Info hash is of incorrect length.");
@@ -34,7 +38,9 @@ public class PeerConnection
     public static async Task<PeerConnection> CreateAsync(Peer peer, byte[] infoHash, byte[] peerId)
     {
         var pc = new PeerConnection(peer, infoHash, peerId);
+        Console.WriteLine($"connecting to port: {pc.Peer.Port}");
         await pc._client.ConnectAsync(pc.Peer.Ip, pc.Peer.Port);
+        Console.WriteLine("Connected");
         await pc.HandShake();
         return pc;
     }
@@ -62,7 +68,7 @@ public class PeerConnection
             throw new HandShakeException("Recieved invalid protocol name length from peer.");
         if (handshake.Slice(1, len).ToArray() != protocolName)
             throw new HandShakeException("Recieved invalid protocol name from peer.");
-        // Skip checking reserved bytes (20..28)
+        // Skip checking reserved bytes (20..27)
         if (handshake.Slice(1 + len + 8, 20).ToArray() != InfoHash)
             throw new HandShakeException("Info hash recieved from peer differs from the one sent.");
         if (Peer.PeerId is not null && handshake.Slice(1 + len + 8 + 20, 20).ToArray() != Peer.PeerId)
