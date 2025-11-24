@@ -26,7 +26,7 @@ public class TorrentTask
 
 
     private Thread? _thread;
-    private byte[] _peerId = Encoding.ASCII.GetBytes(Util.GenerateRandomString(20));
+    private string _peerId = "randompeeridaaaaaaaa";
 
     public void Start()
     {
@@ -63,7 +63,7 @@ public class TorrentTask
             BString failure;
             if ((failure = body.Get<BString>(new BString("failure reason"))) is not null)
             {
-                Console.WriteLine(failure.ToString());
+                Console.WriteLine($"Communication with tracker failed: {failure.ToString()}");
                 return;
             }
             if (!response.IsSuccessStatusCode)
@@ -80,16 +80,24 @@ public class TorrentTask
         var peers = ParsePeers(body["peers"]);
         foreach (var p in peers)
             Console.WriteLine(p);
-        var connections = Task.WhenEach(peers.Select(
-            p => PeerConnection.CreateAsync(p, Torrent.OriginalInfoHashBytes, _peerId)
-        ));
-        await DistributeWorkToPeers(connections);
-
+        var tasks = peers.Select(
+            p => PeerConnection.CreateAsync(p, Torrent.OriginalInfoHashBytes, Encoding.ASCII.GetBytes(_peerId))
+        );
+        await DistributeWorkToPeers((await Task.WhenAll(tasks)).Where(p => p is not null));
     }
 
-    private async Task DistributeWorkToPeers(IAsyncEnumerable<Task<PeerConnection>> peers)
+    private async Task DistributeWorkToPeers(IEnumerable<PeerConnection> peers)
     {
         var downloadedPieces = new BitArray(Torrent.NumberOfPieces);
+        foreach (var peer in peers)
+        {
+            // var peer = await peers.FirstAsync();
+            Console.WriteLine($"reading from {peer}");
+            var msgs = await peer.RecieveMessages();
+            foreach (var msg in msgs)
+                Console.WriteLine(msg);
+            // peers.Append(Task.Yield(peer));
+        }
     }
 
     private static IEnumerable<Peer> ParsePeers(IBObject peers)
@@ -118,11 +126,7 @@ public class TorrentTask
 
     private static IEnumerable<Peer> ParsePeers(BList peersList)
     {
-        if (peersList is null)
-        {
-            Console.WriteLine("no peers");
-            return new List<Peer>();
-        }
+        if (peersList is null) return new List<Peer>();
 
         List<Peer> peers = new();
         foreach (var peerDict in peersList.Value)
@@ -133,7 +137,6 @@ public class TorrentTask
             var port = (int)peer.Get<BNumber>("port").Value;
             var id = peer.Get<BString>("id").Value.ToArray();
             peers.Add(new Peer(ip, port, id));
-            Console.WriteLine(id);
         }
         return peers;
     }

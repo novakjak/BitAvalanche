@@ -12,14 +12,15 @@ public class PeerConnection
     public byte[] InfoHash { get; private set; }
     public byte[] PeerId { get; private set; }
 
-    private bool _choked = true;
-    private bool _interested = false;
+    private bool _amChoked = true;
+    private bool _isChoked = true;
+    private bool _amInterested = false;
+    private bool _isInterested = false;
 
     private readonly TcpClient _client;
 
     private PeerConnection(Peer peer, byte[] infoHash, byte[] peerId)
     {
-        Console.WriteLine(new KeepAlive());
         if (infoHash.Length != 20)
         {
             throw new ArgumentException("Info hash is of incorrect length.");
@@ -35,13 +36,38 @@ public class PeerConnection
         _client = new TcpClient();
     }
 
-    public static async Task<PeerConnection> CreateAsync(Peer peer, byte[] infoHash, byte[] peerId)
+    public async Task<IEnumerable<IPeerMessage>> RecieveMessages()
+    {
+        var stream = _client.GetStream();
+        var messages = new List<IPeerMessage>();
+        while (stream.DataAvailable)
+        {
+            var lenBuf = new byte[4];
+            await stream.ReadExactlyAsync(lenBuf, 0, 4);
+            var len = IPAddress.NetworkToHostOrder(BitConverter.ToInt32(lenBuf));
+            var msgBuf = new byte[4 + len];
+            lenBuf.CopyTo(msgBuf, 0);
+            await stream.ReadExactlyAsync(msgBuf, 4, len);
+            var msg = PeerMessageParser.Parse(msgBuf);
+            if (msg is null) continue;
+            messages.Add(msg);
+        }
+        return messages;
+    }
+
+    public static async Task<PeerConnection?> CreateAsync(Peer peer, byte[] infoHash, byte[] peerId)
     {
         var pc = new PeerConnection(peer, infoHash, peerId);
-        Console.WriteLine($"connecting to port: {pc.Peer.Port}");
-        await pc._client.ConnectAsync(pc.Peer.Ip, pc.Peer.Port);
-        Console.WriteLine("Connected");
-        await pc.HandShake();
+        try
+        {
+            await pc._client.ConnectAsync(pc.Peer.Ip, pc.Peer.Port);
+            await pc.HandShake();
+        }
+        catch (Exception e)
+        {
+            Console.WriteLine($"Handshake failed for peer {peer}: {e.Message}");
+            return null;
+        }
         return pc;
     }
 
@@ -60,10 +86,22 @@ public class PeerConnection
         buffer.AddRange(PeerId);
 
         await stream.WriteAsync(buffer.ToArray());
+        await stream.FlushAsync();
 
-        var handshake = new Memory<byte>(new Byte[49 + len]);
-        await stream.ReadExactlyAsync(handshake);
+        // var nread = 0;
+        // while (nread < handshake.Length)
+        // {
+        //     nread += await stream.ReadAsync(handshake);
+        //     Console.WriteLine(nread);
+        // }
+        var messageBuf = new Byte[49 + len];
+        var handshake = new Memory<byte>(messageBuf);
+        await stream.ReadAtLeastAsync(messageBuf, 4);
 
+        Console.WriteLine(handshake.Span[0]);
+        Console.WriteLine(handshake.Span[1]);
+        Console.WriteLine(handshake.Span[2]);
+        Console.WriteLine(handshake.Span[3]);
         if (handshake.Span[0] != len)
             throw new HandShakeException("Recieved invalid protocol name length from peer.");
         if (handshake.Slice(1, len).ToArray() != protocolName)
@@ -73,7 +111,6 @@ public class PeerConnection
             throw new HandShakeException("Info hash recieved from peer differs from the one sent.");
         if (Peer.PeerId is not null && handshake.Slice(1 + len + 8 + 20, 20).ToArray() != Peer.PeerId)
             throw new HandShakeException("Peer's id mismatched.");
-        Console.WriteLine($"Got peer {Peer.PeerId}");
     }
 
     ~PeerConnection()

@@ -1,4 +1,5 @@
 using System;
+using System.Net;
 
 public static class Util
 {
@@ -27,4 +28,6 @@ public static class Util
 			Array.Reverse(bytes);
 		return bytes;
 	}
+	public static UInt32 FromNetworkOrderBytes(byte[] buffer, int offset) =>
+		(UInt32)IPAddress.NetworkToHostOrder(BitConverter.ToInt32(buffer, offset));
 }
