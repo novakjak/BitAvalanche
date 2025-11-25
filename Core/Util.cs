@@ -1,6 +1,8 @@
 using System;
 using System.Net;
 
+namespace bittorrent.Core;
+
 public static class Util
 {
     const string ALPHANUM = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";

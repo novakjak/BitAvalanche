@@ -1,7 +1,9 @@
 using System;
 using System.Collections;
 
-// TODO: implement bitfield
+using bittorrent.Core.Data;
+
+namespace bittorrent.Core;
 
 public static class PeerMessageParser
 {
@@ -168,7 +170,7 @@ public class Request : IPeerMessage
 	}
 }
 public class Piece : IPeerMessage {
-	public Chunk Chunk { get; set; }
+	public Data.Chunk Chunk { get; set; }
 	public byte[] ToBytes()
 	{
 		var buf = new byte[13 + Chunk.Data.Length];
@@ -183,7 +185,7 @@ public class Piece : IPeerMessage {
 	{
 		Chunk = new Chunk(idx, begin, data);
 	}
-	public Piece(Chunk chunk)
+	public Piece(Data.Chunk chunk)
 	{
 		Chunk = chunk;
 	}

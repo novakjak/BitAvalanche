@@ -8,6 +8,8 @@ using Avalonia.Platform.Storage;
 
 using Out = System.Collections.Generic.IEnumerable<Avalonia.Platform.Storage.IStorageFile>;
 
+namespace bittorrent.Core;
+
 public sealed class FileDialogInteraction : IDisposable, ICommand {
     private Func<Task<Out>>? _handler;
 

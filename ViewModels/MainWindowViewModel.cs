@@ -10,6 +10,7 @@ using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Platform.Storage;
 using BencodeNET.Parsing;
 using BT = BencodeNET.Torrents;
+using bittorrent.Core;
 
 namespace bittorrent.ViewModels;
 

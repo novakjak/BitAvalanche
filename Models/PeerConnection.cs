@@ -9,6 +9,8 @@ using System.Threading.Channels;
 using System.Threading.Tasks;
 using BencodeNET.Torrents;
 
+using bittorrent.Core;
+
 namespace bittorrent.Models;
 
 public class PeerConnection

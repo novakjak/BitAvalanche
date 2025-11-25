@@ -1,4 +1,7 @@
 using System;
+
+namespace bittorrent.Core.Data;
+
 public sealed class Chunk
 {
 	public const int DEFAULT_CHUNK_SIZE = 16384; // 2^14 or 16 kiB

@@ -13,6 +13,8 @@ using BencodeNET.Parsing;
 using BencodeNET.Objects;
 using BT = BencodeNET.Torrents;
 
+using bittorrent.Core;
+
 namespace bittorrent.Models;
 
 public class TorrentTask
