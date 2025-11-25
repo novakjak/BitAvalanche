@@ -1,6 +1,8 @@
 using System.Collections.Generic;
 using bittorrent.Models;
 
+namespace bittorrent.Core;
+
 public interface ICtrlMsg
 {
 	public Peer Peer { get; }
@@ -39,8 +41,8 @@ public class SupplyPieces : ICtrlMsg
 public class DownloadedChunk : ICtrlMsg
 {
 	public Peer Peer { get; }
-	public Chunk Chunk { get; }
-	public DownloadedChunk(Peer peer, Chunk chunk)
+	public Data.Chunk Chunk { get; }
+	public DownloadedChunk(Peer peer, Data.Chunk chunk)
 	{
 		Peer = peer;
 		Chunk = chunk;
