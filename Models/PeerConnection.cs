@@ -156,7 +156,7 @@ public class PeerConnection
 
     private async Task RequestPiece(int piece)
     {
-        var size = TorrentUtils.GetPieceLength(Torrent, piece);
+        var size = PieceStorage.GetPieceLength(Torrent, piece);
         var msgs = new List<IPeerMessage>();
         for (int off = 0; off < size; off += CHUNK_SIZE)
         {
@@ -196,7 +196,7 @@ public class PeerConnection
             case Have h: {
                 PeerHas[(int)h.Piece] = true;
                 await _ctrlChannel.Writer.WriteAsync(new HavePiece(Peer, (int)h.Piece));
-                    break;
+                break;
             }
             case Bitfield b: {
                 b.Data.Length = Torrent.NumberOfPieces;

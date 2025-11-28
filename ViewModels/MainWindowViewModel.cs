@@ -26,7 +26,7 @@ public partial class MainWindowViewModel : ViewModelBase
         var parser = new BencodeParser();
         foreach (var file in files) {
             var metainfo = parser.Parse<BT.Torrent>(file.Path.LocalPath);
-            Torrents.Add(new TorrentTaskViewModel(metainfo));
+            Torrents.Add(await TorrentTaskViewModel.CreateAsync(metainfo));
         }
     }
 }

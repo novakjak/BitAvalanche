@@ -14,6 +14,7 @@ using BencodeNET.Objects;
 using BT = BencodeNET.Torrents;
 
 using bittorrent.Core;
+using Data=bittorrent.Core.Data;
 
 namespace bittorrent.Models;
 
@@ -30,7 +31,8 @@ public class TorrentTask
     private List<Peer> _peers = new();
     private Channel<ICtrlMsg> _mainCtrlChannel;
     private BitArray _downloadedPieces;
-    private BitArray _downloadingPieces;
+    private Dictionary<int, List<Data.Chunk>> _downloadingPieces = new();
+    private PieceStorage _storage;
 
     private static readonly HttpClient client = new();
 
@@ -39,12 +41,18 @@ public class TorrentTask
         _thread ??= Task.Run(this.ManagePeers);
     }
 
-    public TorrentTask(BT.Torrent torrent)
+    private TorrentTask(BT.Torrent torrent, PieceStorage storage)
     {
         Torrent = torrent;
         _downloadedPieces = new BitArray(Torrent.NumberOfPieces);
-        _downloadingPieces = new BitArray(Torrent.NumberOfPieces);
         _mainCtrlChannel = Channel.CreateUnbounded<ICtrlMsg>();
+        _storage = storage;
+    }
+    public static async Task<TorrentTask> CreateAsync(BT.Torrent torrent)
+    {
+        var storage = await PieceStorage.CreateAsync(torrent);
+        var t = new TorrentTask(torrent, storage);
+        return t;
     }
 
     private async Task ManagePeers()
@@ -67,6 +75,10 @@ public class TorrentTask
                     var pieces = RandomNotDownloadedPieces(np.PeerConnection.PeerHas);
                     if (pieces.Length > 0)
                     {
+                        foreach (var piece in pieces)
+                        {
+                            _downloadingPieces.Add(piece, new List<Data.Chunk>());
+                        }
                         var msg = new SupplyPieces(np.Peer, pieces);
                         await np.PeerConnection.PeerChannel.Writer.WriteAsync(msg);
                     }
@@ -74,7 +86,26 @@ public class TorrentTask
                     break;
                 }
                 case DownloadedChunk dc: {
-                    // TODO: implement
+                    var chunks = _downloadingPieces[(int)dc.Chunk.Idx];
+                    if (chunks.Any(c => c.Begin == dc.Chunk.Begin))
+                        break;
+                    chunks.Add(dc.Chunk);
+                    var pieceLen = _storage.GetPieceLength((int)dc.Chunk.Idx);
+                    var chunksInAPiece = pieceLen / PeerConnection.CHUNK_SIZE;
+                    if (pieceLen % PeerConnection.CHUNK_SIZE > 0)
+                        chunksInAPiece++;
+                    if (chunks.Count() == chunksInAPiece)
+                    {
+                        var pieceBuf = new byte[pieceLen];
+                        foreach (var chunk in chunks)
+                        {
+                            chunk.Data.CopyTo(pieceBuf, chunk.Begin);
+                        }
+                        var hash = System.Security.Cryptography.SHA1.HashData(pieceBuf);
+
+                        var piece = new Data.Piece((int)dc.Chunk.Idx, pieceBuf);
+                        await _storage.StorePieceAsync(piece);
+                    }
                     break;
                 }
             }
@@ -83,19 +114,18 @@ public class TorrentTask
 
     private int[] RandomNotDownloadedPieces(BitArray peerHas)
     {
+        var availableToDownload = new BitArray(peerHas);
+
         // Enumerate all pieces that have yet not been fully downloaded.
         var notDownloaded = new BitArray(_downloadedPieces);
         notDownloaded.Not();
+        availableToDownload.And(notDownloaded);
 
-        // Enumerate all pieces that are not being downloaded right now.
-        var notDownloading = new BitArray(_downloadingPieces);
-        notDownloading.Not();
-
-        // Create a result of what is available to be downloaded.
-        var availableToDownload = notDownloaded.And(notDownloading);
-
-        // Limit to only those that the peer can supply.
-        availableToDownload.And(peerHas);
+        // Remove all pieces that are being downloaded right now.
+        foreach (KeyValuePair<int, List<Data.Chunk>> kvp in _downloadingPieces)
+        {
+            availableToDownload[kvp.Key] = false;
+        }
 
         var pieces = availableToDownload.OfType<bool>()
             .Index()
