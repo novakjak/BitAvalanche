@@ -15,17 +15,10 @@ public partial class TorrentTaskViewModel : ViewModelBase
 
     private TorrentTask _task;
 
-    private TorrentTaskViewModel(BT.Torrent t, TorrentTask task)
+    public TorrentTaskViewModel(BT.Torrent t)
     {
         _name = t.DisplayName;
-        _task = task;
+        _task = new TorrentTask(t);
         _task.Start();
-    }
-    public static async Task<TorrentTaskViewModel> CreateAsync(BT.Torrent t)
-    {
-        var task = await TorrentTask.CreateAsync(t);
-        var viewModel = new TorrentTaskViewModel(t, task);
-        System.Console.WriteLine("added viewmodel");
-        return viewModel;
     }
 }

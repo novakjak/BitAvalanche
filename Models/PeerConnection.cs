@@ -208,7 +208,6 @@ public class PeerConnection
                 break;
             }
             case Piece p: {
-                Console.WriteLine($"Got chunk {p.Chunk.Idx}");
                 await _ctrlChannel.Writer.WriteAsync(new DownloadedChunk(Peer, p.Chunk));
                 break;
             }
