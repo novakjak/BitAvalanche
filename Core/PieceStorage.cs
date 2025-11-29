@@ -17,26 +17,19 @@ public sealed class PieceStorage
     private FileStream? _file;
     private List<FileStream>? _files = new();
 
-    private PieceStorage(Torrent torrent)
+    public PieceStorage(Torrent torrent)
     {
         Torrent = torrent;
         _fileMode = torrent.FileMode;
-    }
-
-    public static async Task<PieceStorage> CreateAsync(Torrent torrent)
-    {
-        Console.WriteLine("starged");
-        var ps = new PieceStorage(torrent);
-        if (ps.Torrent.File is not null)
-            await ps.CreateFilesAsync(ps.Torrent.File);
+        if (Torrent.File is not null)
+            CreateFiles(Torrent.File);
         else
-            await ps.CreateFilesAsync(ps.Torrent.Files);
-        Console.WriteLine("edned");
-        return ps;
+            CreateFiles(Torrent.Files);
     }
 
     public async Task StorePieceAsync(Data.Piece piece)
     {
+        Console.WriteLine($"Storing {piece.Idx}");
         if (Torrent.File is not null)
             await StorePieceAsync(Torrent.File, piece);
         else
@@ -58,15 +51,6 @@ public sealed class PieceStorage
         else if (torrent.Files is not null)
             return GetPieceLength(torrent, torrent.Files, piece);
         return 0;
-    }
-
-    private async Task CreateFilesAsync()
-    {
-        Console.WriteLine("creating");
-        if (Torrent.File is not null)
-            await CreateFilesAsync(Torrent.File);
-        else if (Torrent.Files is not null)
-            await CreateFilesAsync(Torrent.Files);
     }
 
     private (int, int) GetFileAndOffsetFromPieceIdx(int pieceIdx)
@@ -105,14 +89,12 @@ public sealed class PieceStorage
         }
         return torrent.PieceSize;
     }
-    private async Task CreateFilesAsync(SingleFileInfo fileInfo)
+    private void CreateFiles(SingleFileInfo fileInfo)
     {
         FileStream file;
-        Console.WriteLine($"creating singl {fileInfo.FileName}");
         try
         {
             file = File.Open(fileInfo.FileName, FileMode.OpenOrCreate);
-            Console.WriteLine("creating open");
             if (file.Length < fileInfo.FileSize)
             {
                 file.SetLength(fileInfo.FileSize);
@@ -122,16 +104,12 @@ public sealed class PieceStorage
             Console.WriteLine(e.Message);
             return;
         }
-        Console.WriteLine("creating created");
         _file = file;
     }
     private async Task StorePieceAsync(SingleFileInfo file, Data.Piece piece)
     {
-        await _file!.WriteAsync(
-            piece.Data,
-            piece.Idx * (int)Torrent.PieceSize,
-            piece.Data.Length
-        );
+        _file!.Seek(piece.Idx * (int)Torrent.PieceSize, SeekOrigin.Begin);
+        await _file!.WriteAsync(piece.Data, 0, piece.Data.Length);
     }
     private async Task<Data.Piece> GetPieceAsync(SingleFileInfo fileInfo, int pieceIdx)
     {
@@ -171,7 +149,7 @@ public sealed class PieceStorage
         }
         return torrent.PieceSize;
     }
-    private async Task CreateFilesAsync(MultiFileInfoList files)
+    private void CreateFiles(MultiFileInfoList files)
     {
         foreach (var fileInfo in Torrent.Files)
         {
@@ -180,7 +158,6 @@ public sealed class PieceStorage
             {
                 file.SetLength(fileInfo.FileSize);
             }
-            await file.FlushAsync();
             _files!.Add(file);
         }
     }
@@ -188,15 +165,11 @@ public sealed class PieceStorage
     {
         var (fileIdx, off) = GetFileAndOffsetFromPieceIdx(piece.Idx);
         var file = _files![fileIdx];
-        await file.WriteAsync(
-            piece.Data,
-            off * (int)Torrent.PieceSize,
-            piece.Data.Length
-        );
+        file.Seek(piece.Idx * (int)Torrent.PieceSize, SeekOrigin.Begin);
+        await file.WriteAsync(piece.Data, 0, piece.Data.Length);
     }
     private async Task<Data.Piece> GetPieceAsync(MultiFileInfoList files, int pieceIdx)
     {
-        Console.WriteLine("creating async");
         var (fileIdx, off) = GetFileAndOffsetFromPieceIdx(pieceIdx);
         var file = _files![fileIdx];
         var len = GetPieceLength(pieceIdx);

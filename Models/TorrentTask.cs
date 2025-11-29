@@ -1,5 +1,6 @@
 using System;
 using System.Linq;
+using System.IO;
 using System.Text;
 using System.Collections;
 using System.Collections.Generic;
@@ -41,18 +42,12 @@ public class TorrentTask
         _thread ??= Task.Run(this.ManagePeers);
     }
 
-    private TorrentTask(BT.Torrent torrent, PieceStorage storage)
+    public TorrentTask(BT.Torrent torrent)
     {
         Torrent = torrent;
         _downloadedPieces = new BitArray(Torrent.NumberOfPieces);
         _mainCtrlChannel = Channel.CreateUnbounded<ICtrlMsg>();
-        _storage = storage;
-    }
-    public static async Task<TorrentTask> CreateAsync(BT.Torrent torrent)
-    {
-        var storage = await PieceStorage.CreateAsync(torrent);
-        var t = new TorrentTask(torrent, storage);
-        return t;
+        _storage = new PieceStorage(torrent);
     }
 
     private async Task ManagePeers()
@@ -72,7 +67,7 @@ public class TorrentTask
                         break;
                     connections.Add(np.PeerConnection);
 
-                    var pieces = RandomNotDownloadedPieces(np.PeerConnection.PeerHas);
+                    var pieces = RandomNotDownloadedPieces(np.PeerConnection.PeerHas, 20);
                     if (pieces.Length > 0)
                     {
                         foreach (var piece in pieces)
@@ -104,7 +99,18 @@ public class TorrentTask
                         var hash = System.Security.Cryptography.SHA1.HashData(pieceBuf);
 
                         var piece = new Data.Piece((int)dc.Chunk.Idx, pieceBuf);
-                        await _storage.StorePieceAsync(piece);
+                        try {
+                            await _storage.StorePieceAsync(piece);
+                        }
+                        catch (IOException e)
+                        {
+                            Console.WriteLine($"Could not write to file: {e.Message}");
+                            return;
+                        }
+                        var peer = connections.First(c => c.Peer == dc.Peer);
+                        var pieces = RandomNotDownloadedPieces(peer.PeerHas, 1);
+                        var msg = new SupplyPieces(peer.Peer, pieces);
+                        await peer.PeerChannel.Writer.WriteAsync(msg);
                     }
                     break;
                 }
@@ -112,7 +118,7 @@ public class TorrentTask
         }
     }
 
-    private int[] RandomNotDownloadedPieces(BitArray peerHas)
+    private int[] RandomNotDownloadedPieces(BitArray peerHas, int count)
     {
         var availableToDownload = new BitArray(peerHas);
 
@@ -130,7 +136,7 @@ public class TorrentTask
         var pieces = availableToDownload.OfType<bool>()
             .Index()
             .Where(p => p.Item2)
-            .Select(p => p.Item1).Take(20).ToArray();
+            .Select(p => p.Item1).Take(count).ToArray();
         var rng = new Random();
         rng.Shuffle(pieces);
         return pieces;
