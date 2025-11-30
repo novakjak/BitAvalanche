@@ -5,7 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using BencodeNET.Torrents;
 
-using bittorrent.Core.Data;
+using Data=bittorrent.Models.Data;
 
 namespace bittorrent.Core;
 
