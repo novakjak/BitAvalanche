@@ -1,6 +1,6 @@
 using System;
 
-namespace bittorrent.Core.Data;
+namespace bittorrent.Models.Data;
 
 public sealed class Chunk
 {
