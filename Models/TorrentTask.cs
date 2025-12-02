@@ -27,6 +27,8 @@ public class TorrentTask
     public int Downloaded { get; private set; } = 0;
     public int DownloadedValid { get; private set; } = 0;
 
+    public event EventHandler<(int pieceIdx, double completion)>? DownloadedPiece;
+
     private Task? _thread;
     private string _peerId = "randompeeridaaaaaaaa";
     private List<Peer> _peers = new();
@@ -82,6 +84,7 @@ public class TorrentTask
                     var chunksInAPiece = pieceLen / PeerConnection.CHUNK_SIZE;
                     if (pieceLen % PeerConnection.CHUNK_SIZE > 0)
                         chunksInAPiece++;
+                    Downloaded += dc.Chunk.Data.Length;
                     if (chunks.Count() == chunksInAPiece)
                     {
                         var pieceBuf = new byte[pieceLen];
@@ -101,6 +104,9 @@ public class TorrentTask
                             Console.WriteLine($"Could not write to file: {e.Message}");
                             return;
                         }
+                        DownloadedValid += pieceBuf.Length;
+                        var args = (piece.Idx, (double)DownloadedValid / (double)Torrent.TotalSize);
+                        DownloadedPiece?.Invoke(this, args);
                         var peer = connections.First(c => c.Peer == dc.Peer);
                         await SupplyPiecesToPeer(peer, 1);
                     }

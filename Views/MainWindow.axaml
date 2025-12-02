@@ -28,7 +28,7 @@
                         <Grid ColumnDefinitions="*,*,*,*">
                             <TextBlock Text="{Binding Name}" Grid.Column="0"/>
                             <TextBlock Text="{Binding PercentComplete}" Grid.Column="1"/>
-                            <Slider Minimum="0" Maximum="100" Value="{Binding PercentComplete, Mode=OneWay}" IsEnabled="False" Grid.Column="2"/>
+                            <Slider Minimum="0" Maximum="1" Value="{Binding PercentComplete, Mode=OneWay}" IsEnabled="False" Grid.Column="2"/>
                         </Grid>
                     </DataTemplate>
                 </ItemsControl.ItemTemplate>

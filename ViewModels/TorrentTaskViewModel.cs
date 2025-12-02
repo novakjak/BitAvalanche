@@ -17,8 +17,14 @@ public partial class TorrentTaskViewModel : ViewModelBase
 
     public TorrentTaskViewModel(BT.Torrent t)
     {
-        _name = t.DisplayName;
+        Name = t.DisplayName;
         _task = new TorrentTask(t);
+        _task.DownloadedPiece += HandleDownloadedPiece;
         _task.Start();
+    }
+
+    public void HandleDownloadedPiece(object? sender, (int pieceIdx, double completion) args)
+    {
+        PercentComplete = args.completion;
     }
 }
