@@ -1,10 +1,9 @@
 using System;
 using System.Collections;
 
-using bittorrent.Core;
-using bittorrent.Models.Data;
+using bittorrent.Core.Data;
 
-namespace bittorrent.Models;
+namespace bittorrent.Core;
 
 public static class PeerMessageParser
 {
