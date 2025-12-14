@@ -105,9 +105,9 @@ public class NotInterested : IPeerMessage
 {
 	public byte[] ToBytes() => [0, 0, 0, 1, 3];
 }
-public class Have : IPeerMessage
+public class Have(UInt32 piece) : IPeerMessage
 {
-	public UInt32 Piece { get; set; }
+	public UInt32 Piece { get; set; } = piece;
 	public byte[] ToBytes()
 	{
 		var buf = new byte[9];
@@ -116,15 +116,10 @@ public class Have : IPeerMessage
 		Util.GetNetworkOrderBytes(Piece).CopyTo(buf, 5);
 		return buf;
 	}
-	public Have(UInt32 piece)
-	{
-		Piece = piece;
-	}
-	
 }
-public class Bitfield : IPeerMessage
+public class Bitfield(BitArray bitfield) : IPeerMessage
 {
-	public BitArray Data { get; set; }
+	public BitArray Data { get; set; } = bitfield;
 	public byte[] ToBytes()
 	{
 		var bitfieldLen = Data.Count / 8;
@@ -142,16 +137,12 @@ public class Bitfield : IPeerMessage
 		}
 		return buf;
 	}
-	public Bitfield(BitArray bitfield)
-	{
-		Data = bitfield;
-	}
 }
-public class Request : IPeerMessage
+public class Request(UInt32 idx, UInt32 begin, UInt32 length) : IPeerMessage
 {
-	public UInt32 Idx { get; set; }
-	public UInt32 Begin { get; set; }
-	public UInt32 Length { get; set; }
+	public UInt32 Idx { get; set; } = idx;
+	public UInt32 Begin { get; set; } = begin;
+	public UInt32 Length { get; set; } = length;
 	public byte[] ToBytes()
 	{
 		var buf = new byte[17];
@@ -162,15 +153,9 @@ public class Request : IPeerMessage
 		Util.GetNetworkOrderBytes(Length).CopyTo(buf, 13);
 		return buf;
 	}
-	public Request(UInt32 idx, UInt32 begin, UInt32 length)
-	{
-		Idx = idx;
-		Begin = begin;
-		Length = length;
-	}
 }
-public class Piece : IPeerMessage {
-	public Data.Chunk Chunk { get; set; }
+public class Piece(Data.Chunk chunk) : IPeerMessage {
+	public Data.Chunk Chunk { get; set; } = chunk;
 	public byte[] ToBytes()
 	{
 		var buf = new byte[13 + Chunk.Data.Length];
@@ -181,20 +166,14 @@ public class Piece : IPeerMessage {
 		Chunk.Data.CopyTo(buf, 13);
 		return buf;
 	}
-	public Piece(UInt32 idx, UInt32 begin, byte[] data)
-	{
-		Chunk = new Chunk(idx, begin, data);
-	}
-	public Piece(Data.Chunk chunk)
-	{
-		Chunk = chunk;
-	}
+	public Piece(UInt32 idx, UInt32 begin, byte[] data) : this(new Chunk(idx, begin, data))
+	{ }
 }
-public class Cancel : IPeerMessage
+public class Cancel(UInt32 idx, UInt32 begin, UInt32 length) : IPeerMessage
 {
-	public UInt32 Idx { get; set; }
-	public UInt32 Begin { get; set; }
-	public UInt32 Length { get; set; }
+	public UInt32 Idx { get; set; } = idx;
+	public UInt32 Begin { get; set; } = begin;
+	public UInt32 Length { get; set; } = length;
 	public byte[] ToBytes()
 	{
 		var buf = new byte[17];
@@ -204,11 +183,5 @@ public class Cancel : IPeerMessage
 		Util.GetNetworkOrderBytes(Begin).CopyTo(buf, 9);
 		Util.GetNetworkOrderBytes(Length).CopyTo(buf, 13);
 		return buf;
-	}
-	public Cancel(UInt32 idx, UInt32 begin, UInt32 length)
-	{
-		Idx = idx;
-		Begin = begin;
-		Length = length;
 	}
 }

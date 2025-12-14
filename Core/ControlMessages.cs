@@ -8,43 +8,28 @@ public interface ICtrlMsg
 	public Peer Peer { get; }
 }
 
-public class NewPeer : ICtrlMsg
+public class NewPeer(PeerConnection pc) : ICtrlMsg
 {
-	public Peer Peer { get; }
-	public PeerConnection PeerConnection { get; }
-	public NewPeer(PeerConnection pc)
-	{
-		Peer = pc.Peer;
-		PeerConnection = pc;
-	}
+	public Peer Peer { get; } = pc.Peer;
+	public PeerConnection PeerConnection { get; } = pc;
 }
-public class SupplyPieces : ICtrlMsg
+public class SupplyPieces(Peer peer, IEnumerable<int> pieces) : ICtrlMsg
 {
-	public Peer Peer { get; }
-	public IEnumerable<int> Pieces { get; }
-	public SupplyPieces(Peer peer, IEnumerable<int> pieces)
-	{
-		Peer = peer;
-		Pieces = pieces;
-	}
+	public Peer Peer { get; } = peer;
+	public IEnumerable<int> Pieces { get; } = pieces;
 }
-public class DownloadedChunk : ICtrlMsg
+public class DownloadedChunk(Peer peer, Data.Chunk chunk) : ICtrlMsg
 {
-	public Peer Peer { get; }
-	public Data.Chunk Chunk { get; }
-	public DownloadedChunk(Peer peer, Data.Chunk chunk)
-	{
-		Peer = peer;
-		Chunk = chunk;
-	}
+	public Peer Peer { get; } = peer;
+	public Data.Chunk Chunk { get; } = chunk;
 }
-public class HavePiece : ICtrlMsg
+public class HavePiece(Peer peer, int idx) : ICtrlMsg
 {
-	public Peer Peer { get; }
-	public int Idx { get; }
-	public HavePiece(Peer peer, int idx)
-	{
-		Peer = peer;
-		Idx = idx;
-	}
+	public Peer Peer { get; } = peer;
+	public int Idx { get; } = idx;
+}
+public class CloseConnection(Peer peer, List<int> wasDownloading) : ICtrlMsg
+{
+	public Peer Peer { get; } = peer;
+	public List<int> WasDownloading { get; } = wasDownloading;
 }
