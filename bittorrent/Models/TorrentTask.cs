@@ -5,6 +5,7 @@ using System.Text;
 using System.Collections;
 using System.Collections.Generic;
 using System.Net;
+using System.Net.Sockets;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
@@ -22,6 +23,7 @@ namespace bittorrent.Models;
 public class TorrentTask
 {
     public readonly BT.Torrent Torrent;
+    public byte[] HashId { get => Torrent.OriginalInfoHashBytes; }
     public int PeerCount { get; private set; } = 0;
     public int Uploaded { get; private set; } = 0;
     public int Downloaded { get; private set; } = 0;
@@ -30,7 +32,7 @@ public class TorrentTask
     public event EventHandler<(int pieceIdx, double completion)>? DownloadedPiece;
 
     private Task? _thread;
-    private string _peerId = "randompeeridaaaaaaaa";
+    private string _peerId = Util.GenerateRandomString(20);
     private List<Peer> _peers = new();
     private Channel<ICtrlMsg> _mainCtrlChannel;
     private BitArray _downloadedPieces;
@@ -40,17 +42,28 @@ public class TorrentTask
 
     private static readonly HttpClient client = new();
 
-    public void Start()
-    {
-        _thread ??= Task.Run(this.ManagePeers, _cancallation.Token);
-    }
-
     public TorrentTask(BT.Torrent torrent)
     {
         Torrent = torrent;
         _downloadedPieces = new BitArray(Torrent.NumberOfPieces);
         _mainCtrlChannel = Channel.CreateUnbounded<ICtrlMsg>();
         _storage = new PieceStorage(torrent);
+    }
+
+    public void Start()
+    {
+        _thread ??= Task.Run(this.ManagePeers, _cancallation.Token);
+    }
+
+    public void AddPeer(TcpClient conn, Peer peer)
+    {
+        Task.Run(async () => {
+            var peerChannel = Channel.CreateUnbounded<ICtrlMsg>();
+            var peerId = Encoding.ASCII.GetBytes(_peerId);
+            await PeerConnection.CreateAndFinishHandshakeAsync(
+                conn, peer, Torrent, peerId, _mainCtrlChannel,
+                peerChannel, _downloadedPieces);
+        });
     }
 
     private async Task ManagePeers()

@@ -11,16 +11,20 @@ public partial class TorrentTaskViewModel : ViewModelBase
     private string _name = "";
 
     [ObservableProperty]
+    private byte[] _infoHash = new byte[0];
+
+    [ObservableProperty]
     private double _percentComplete = 0.0;
 
-    private TorrentTask _task;
+    public TorrentTask Task { get; private set; }
 
     public TorrentTaskViewModel(BT.Torrent t)
     {
         Name = t.DisplayName;
-        _task = new TorrentTask(t);
-        _task.DownloadedPiece += HandleDownloadedPiece;
-        _task.Start();
+        InfoHash = t.OriginalInfoHashBytes;
+        Task = new TorrentTask(t);
+        Task.DownloadedPiece += HandleDownloadedPiece;
+        Task.Start();
     }
 
     public void HandleDownloadedPiece(object? sender, (int pieceIdx, double completion) args)

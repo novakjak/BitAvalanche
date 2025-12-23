@@ -68,16 +68,29 @@ public class PeerConnection
     )
     {
         var pc = new PeerConnection(peer, torrent, peerId, ctrlChannel, peerChannel, have);
+        pc._client = new();
+        await pc._client.ConnectAsync(pc.Peer.Ip, pc.Peer.Port, pc._cancellation.Token);
+        await pc.HandShake();
+        await pc.Start();
+        return pc;
+    }
+
+    public static async Task<PeerConnection> CreateAndFinishHandshakeAsync(
+        TcpClient client, Peer peer, Torrent torrent, byte[] peerId,
+        Channel<ICtrlMsg> ctrlChannel,
+        Channel<ICtrlMsg> peerChannel,
+        BitArray have
+    )
+    {
+        var pc = new PeerConnection(peer, torrent, peerId, ctrlChannel, peerChannel, have);
+        pc._client = client;
+        await pc.SendHandshake();
         await pc.Start();
         return pc;
     }
 
     public async Task Start()
     {
-        _client.Close();
-        _client = new();
-        await _client.ConnectAsync(Peer.Ip, Peer.Port, _cancellation.Token);
-        await HandShake();
         _listenerTask = Task.Run(ListenOnMessages, _cancellation.Token).ContinueWith(StopOnException);
         _controlTask = Task.Run(Control, _cancellation.Token).ContinueWith(StopOnException);
         await _ctrlChannel.Writer.WriteAsync(new NewPeer(this), _cancellation.Token);
@@ -248,22 +261,32 @@ public class PeerConnection
 
     private async Task HandShake()
     {
+        await SendHandshake();
+        await ReceiveHandshake();
+        // TODO: send bitfield and interested if the whole torrent is not downloaded yet
+    }
+
+    private async Task SendHandshake()
+    {
         var stream = _client.GetStream();
         var handshake = new Handshake(Torrent.OriginalInfoHashBytes, PeerId);
         await stream.WriteAsync(handshake.ToBytes(), _cancellation.Token);
         await stream.FlushAsync(_cancellation.Token);
+    }
 
-        var messageBuf = new Byte[49 + Handshake.DefaultProtocol.Length];
+    private async Task ReceiveHandshake()
+    {
+        var messageBuf = new Byte[Handshake.MessageLength];
         var messageMem = new Memory<byte>(messageBuf);
-        await stream.ReadExactlyAsync(messageBuf, 0, messageBuf.Length, _cancellation.Token);
-        var recieved = Handshake.Parse(messageMem);
+        await _client
+            .GetStream()
+            .ReadExactlyAsync(messageBuf, 0, messageBuf.Length, _cancellation.Token);
+        var handshake = Handshake.Parse(messageMem);
 
-        if (!recieved.InfoHash.SequenceEqual(Torrent.OriginalInfoHashBytes))
-            throw new HandShakeException("Info hash recieved from peer differs from the one sent.");
-        if (Peer.PeerId is not null && !recieved.PeerId.SequenceEqual(Peer.PeerId))
+        if (!handshake.InfoHash.SequenceEqual(Torrent.OriginalInfoHashBytes))
+            throw new HandShakeException("Info hash received from peer differs from the one sent.");
+        if (Peer.PeerId is not null && !handshake.PeerId.SequenceEqual(Peer.PeerId))
             throw new HandShakeException("Peer's id mismatched.");
-
-        // TODO: send bitfield and interested if the whole torrent is not downloaded yet
     }
 
     ~PeerConnection()
