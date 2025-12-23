@@ -10,11 +10,11 @@ using bittorrent.ViewModels;
 
 namespace bittorrent.Views;
 
-public partial class MainWindow : Window
+public partial class TorrentLibrary : Window
 {
     private IDisposable? _fileDialogInteractionDisposable = null;
     
-    public MainWindow()
+    public TorrentLibrary()
     {
         InitializeComponent();
     }
@@ -23,7 +23,7 @@ public partial class MainWindow : Window
     {
         _fileDialogInteractionDisposable?.Dispose();
 
-        if (DataContext is MainWindowViewModel vm) {
+        if (DataContext is TorrentLibraryViewModel vm) {
             _fileDialogInteractionDisposable = vm.SelectFiles.RegisterHandler(FileDialogHandler);
         }
 

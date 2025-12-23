@@ -198,6 +198,7 @@ public class Cancel(UInt32 idx, UInt32 begin, UInt32 length) : IPeerMessage
 public class Handshake
 {
 	public static string DefaultProtocol = "BitTorrent protocol";
+	public static int MessageLength = 49 + DefaultProtocol.Length;
 
 	public string ProtocolName { get; set; }
 	public byte[] ProtocolExtensions { get; set; }
@@ -236,7 +237,7 @@ public class Handshake
 	public static Handshake Parse(Memory<byte> handshake)
 	{
 		int pLen = DefaultProtocol.Length;
-		if (handshake.Length != 49 + pLen)
+		if (handshake.Length != Handshake.MessageLength)
 			throw new HandShakeException("Handshake length is invalid");
 
         if (handshake.Span[0] != pLen)
