@@ -172,7 +172,7 @@ public class TorrentTask
             .Select(p => p.Item1).ToArray();
         var rng = new Random();
         rng.Shuffle(pieces);
-        return pieces.Take(20);
+        return pieces.Take(count);
     }
 
     private async Task Announce()
