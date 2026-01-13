@@ -145,7 +145,7 @@ public class Bitfield(BitArray bitfield) : IPeerMessage
 		return buf;
 	}
 }
-public class Request(UInt32 idx, UInt32 begin, UInt32 length) : IPeerMessage
+public class Request(UInt32 idx, UInt32 begin, UInt32 length) : IPeerMessage, IEquatable<Request>, IEquatable<Cancel>
 {
 	public UInt32 Idx { get; set; } = idx;
 	public UInt32 Begin { get; set; } = begin;
@@ -159,6 +159,20 @@ public class Request(UInt32 idx, UInt32 begin, UInt32 length) : IPeerMessage
 		Util.GetNetworkOrderBytes(Begin).CopyTo(buf, 9);
 		Util.GetNetworkOrderBytes(Length).CopyTo(buf, 13);
 		return buf;
+	}
+	public bool Equals(Request? other)
+	{
+		return other is not null
+			&& Idx == other.Idx
+			&& Begin == other.Begin
+			&& Length == other.Length;
+	}
+	public bool Equals(Cancel? other)
+	{
+		return other is not null
+			&& Idx == other.Idx
+			&& Begin == other.Begin
+			&& Length == other.Length;
 	}
 }
 public class Piece(Data.Chunk chunk) : IPeerMessage {
@@ -176,7 +190,7 @@ public class Piece(Data.Chunk chunk) : IPeerMessage {
 	public Piece(UInt32 idx, UInt32 begin, byte[] data) : this(new Chunk(idx, begin, data))
 	{ }
 }
-public class Cancel(UInt32 idx, UInt32 begin, UInt32 length) : IPeerMessage
+public class Cancel(UInt32 idx, UInt32 begin, UInt32 length) : IPeerMessage, IEquatable<Cancel>, IEquatable<Request>
 {
 	public UInt32 Idx { get; set; } = idx;
 	public UInt32 Begin { get; set; } = begin;
@@ -190,6 +204,20 @@ public class Cancel(UInt32 idx, UInt32 begin, UInt32 length) : IPeerMessage
 		Util.GetNetworkOrderBytes(Begin).CopyTo(buf, 9);
 		Util.GetNetworkOrderBytes(Length).CopyTo(buf, 13);
 		return buf;
+	}
+	public bool Equals(Cancel? other)
+	{
+		return other is not null
+			&& Idx == other.Idx
+			&& Begin == other.Begin
+			&& Length == other.Length;
+	}
+	public bool Equals(Request? other)
+	{
+		return other is not null
+			&& Idx == other.Idx
+			&& Begin == other.Begin
+			&& Length == other.Length;
 	}
 }
 

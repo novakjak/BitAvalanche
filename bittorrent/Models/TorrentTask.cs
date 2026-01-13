@@ -26,8 +26,8 @@ public class TorrentTask
     public byte[] HashId { get => Torrent.OriginalInfoHashBytes; }
     public int PeerCount { get; private set; } = 0;
     public int Uploaded { get; private set; } = 0;
-    public int Downloaded { get; private set; } = 0;
-    public int DownloadedValid { get; private set; } = 0;
+    public int Downloaded { get; internal set; } = 0;
+    public int DownloadedValid { get; internal set; } = 0;
     public string PeerId { get; private set; } = Util.GenerateRandomString(20);
 
     public event EventHandler<(int pieceIdx, double completion)>? DownloadedPiece;
@@ -35,10 +35,10 @@ public class TorrentTask
     private Task? _thread;
     private List<Peer> _peers = new();
     private Channel<IPeerCtrlMsg> _mainCtrlChannel;
-    private BitArray _downloadedPieces;
-    private Dictionary<int, List<Data.Chunk>> _downloadingPieces = new();
-    private PieceStorage _storage;
-    private CancellationTokenSource _cancellation = new();
+    internal BitArray _downloadedPieces;
+    internal Dictionary<int, List<Data.Chunk>> _downloadingPieces = new();
+    internal PieceStorage _storage;
+    internal CancellationTokenSource _cancellation = new();
 
     private static readonly HttpClient client = new();
 
@@ -52,7 +52,9 @@ public class TorrentTask
 
     public void Start()
     {
-        _thread ??= Task.Run(this.ManagePeers, _cancellation.Token);
+        _thread ??= Task
+            .Run(this.ManagePeers, _cancellation.Token)
+            .ContinueWith(LogException);
     }
 
     public void AddPeer(INetworkClient conn, Peer peer)
@@ -64,7 +66,7 @@ public class TorrentTask
             await PeerConnection.CreateAndFinishHandshakeAsync(
                 conn, peer, Torrent, peerId, _mainCtrlChannel,
                 peerChannel, _downloadedPieces, peerTokenSource);
-        });
+        }).ContinueWith(LogException);
     }
 
     private async Task ManagePeers()
@@ -72,91 +74,16 @@ public class TorrentTask
         var connections = new List<PeerConnection>();
         await Announce();
 
-        try
-        {
         // Main control loop
         var rx = _mainCtrlChannel.Reader;
         while (await rx.WaitToReadAsync(_cancellation.Token))
         {
             var message = await rx.ReadAsync(_cancellation.Token);
-            switch (message)
-            {
-                case NewPeer np: {
-                    if (connections.Select(pc => pc.Peer).Contains(np.Peer))
-                        break;
-                    connections.Add(np.PeerConnection);
-                    await SupplyPiecesToPeer(np.PeerConnection, PeerConnection.MAX_DOWNLOADING_PIECES);
-                    Console.WriteLine($"Added Connection: {np.Peer}");
-                    break;
-                }
-                case RequestPieces rp: {
-                    var conn = connections.First(c => c.Peer == rp.Peer);
-                    await SupplyPiecesToPeer(conn, rp.Count);
-                    break;
-                }
-                case DownloadedChunk dc: {
-                    var chunks = _downloadingPieces[(int)dc.Chunk.Idx];
-                    if (chunks.Any(c => c.Begin == dc.Chunk.Begin))
-                        break;
-                    chunks.Add(dc.Chunk);
-                    var pieceLen = _storage.GetPieceLength((int)dc.Chunk.Idx);
-                    var chunksInAPiece = pieceLen / PeerConnection.CHUNK_SIZE;
-                    if (pieceLen % PeerConnection.CHUNK_SIZE > 0)
-                        chunksInAPiece++;
-                    Downloaded += dc.Chunk.Data.Length;
-                    if (chunks.Count() == chunksInAPiece)
-                    {
-                        _downloadingPieces.Remove((int)dc.Chunk.Idx);
-                        var pieceBuf = new byte[pieceLen];
-                        foreach (var chunk in chunks)
-                        {
-                            chunk.Data.CopyTo(pieceBuf, chunk.Begin);
-                        }
-                        var hash = System.Security.Cryptography.SHA1.HashData(pieceBuf);
-                        var pieceHash = new ArraySegment<byte>(Torrent.Pieces, (int)dc.Chunk.Idx * 20, 20);
-                        if (!hash.SequenceEqual(pieceHash))
-                        {
-                            break;
-                        }
-
-                        var piece = new Data.Piece((int)dc.Chunk.Idx, pieceBuf);
-                        try {
-                            await _storage.StorePieceAsync(piece);
-                        }
-                        catch (IOException e)
-                        {
-                            Console.WriteLine($"Could not write to file: {e.Message}");
-                            return;
-                        }
-                        DownloadedValid += pieceBuf.Length;
-                        var args = (piece.Idx, (double)DownloadedValid / (double)Torrent.TotalSize);
-                        DownloadedPiece?.Invoke(this, args);
-                        _downloadedPieces[(int)dc.Chunk.Idx] = true;
-
-                        var peer = connections.First(c => c.Peer == dc.Peer);
-                        await SupplyPiecesToPeer(peer, 1);
-                    }
-                    break;
-                }
-                case CloseConnection cc: {
-                    foreach (var idx in cc.WasDownloading)
-                    {
-                        _downloadingPieces.Remove(idx);
-                    }
-                    connections.RemoveAll(conn => conn.Peer == cc.Peer);
-                    Console.WriteLine($"closed connection with {cc.Peer}");
-                    break;
-                }
-            }
-        }
-        }
-        catch (Exception e)
-        {
-            Console.WriteLine("Thrown on storing piece " + e.Message);
+            await message.Handle(this, connections);
         }
     }
 
-    private async Task SupplyPiecesToPeer(PeerConnection pc, int count)
+    internal async Task SupplyPiecesToPeer(PeerConnection pc, int count)
     {
         var pieces = RandomNotDownloadedPieces(pc.PeerHas, count);
         if (pieces.Count() > 0)
@@ -245,6 +172,23 @@ public class TorrentTask
         }
     }
 
+    internal void AnnounceDownloadedPiece(Data.Piece piece)
+    {
+        var args = (piece.Idx, (double)DownloadedValid / (double)Torrent.TotalSize);
+        DownloadedPiece?.Invoke(this, args);
+        _downloadedPieces[(int)piece.Idx] = true;
+    }
+
+    private static async Task LogException(Task task)
+    {
+        if (task.IsFaulted)
+        {
+            Console.WriteLine(task.Exception);
+            return;
+        }
+        await task;
+    }
+
     private static IEnumerable<Peer> ParsePeers(IBObject peers)
     {
         if (peers is BString s)
@@ -293,5 +237,104 @@ public class TorrentTask
         client.Dispose();
         _mainCtrlChannel.Writer.TryComplete();
         _thread?.Dispose();
+    }
+}
+
+file static class CtrlMessageExtensions {
+    internal static async Task Handle(this NewPeer msg, TorrentTask task, List<PeerConnection> connections)
+    {
+        if (connections.Select(pc => pc.Peer).Contains(msg.Peer))
+            return;
+        connections.Add(msg.PeerConnection);
+        await task.SupplyPiecesToPeer(msg.PeerConnection, PeerConnection.MAX_DOWNLOADING_PIECES);
+        Console.WriteLine($"Added Connection: {msg.Peer}");
+    }
+    internal static async Task Handle(this RequestPieces msg, TorrentTask task, List<PeerConnection> connections)
+    {
+        var conn = connections.First(c => c.Peer == msg.Peer);
+        await task.SupplyPiecesToPeer(conn, msg.Count);
+    }
+    internal static async Task Handle(this RequestChunk msg, TorrentTask task, List<PeerConnection> connections)
+    {
+        var conn = connections.First(c => c.Peer == msg.Peer);
+        var request = msg.Request;
+        if (request.Idx >= task._downloadedPieces.Count || !task._downloadedPieces[(int)request.Idx])
+            return;
+        var piece = await task._storage.GetPieceAsync((int)request.Idx);
+        var buf = new byte[request.Length]; 
+        Array.Copy(piece.Data, (int)request.Begin, buf, 0, (int)request.Length);
+        var chunk = new Data.Chunk(request.Idx, request.Begin, buf);
+        await conn.PeerChannel.Writer.WriteAsync(new SupplyChunk(chunk), task._cancellation.Token);
+    }
+    internal static async Task Handle(this DownloadedChunk msg, TorrentTask task, List<PeerConnection> connections)
+    {
+        var chunks = task._downloadingPieces[(int)msg.Chunk.Idx];
+        if (chunks.Any(c => c.Begin == msg.Chunk.Begin))
+            return;
+        chunks.Add(msg.Chunk);
+        var pieceLen = task._storage.GetPieceLength((int)msg.Chunk.Idx);
+        var chunksInAPiece = pieceLen / PeerConnection.CHUNK_SIZE;
+        if (pieceLen % PeerConnection.CHUNK_SIZE > 0)
+            chunksInAPiece++;
+        task.Downloaded += msg.Chunk.Data.Length;
+
+        if (chunks.Count() != chunksInAPiece)
+            return;
+
+        // Store piece to disk.
+        task._downloadingPieces.Remove((int)msg.Chunk.Idx);
+        var pieceBuf = new byte[pieceLen];
+        foreach (var chunk in chunks)
+            chunk.Data.CopyTo(pieceBuf, chunk.Begin);
+        var hash = System.Security.Cryptography.SHA1.HashData(pieceBuf);
+        var pieceHash = new ArraySegment<byte>(task.Torrent.Pieces, (int)msg.Chunk.Idx * 20, 20);
+        if (!hash.SequenceEqual(pieceHash))
+            return;
+
+        var piece = new Data.Piece((int)msg.Chunk.Idx, pieceBuf);
+        try
+        {
+            await task._storage.StorePieceAsync(piece);
+        }
+        catch (IOException e)
+        {
+            Console.WriteLine($"Could not write to file: {e.Message}");
+            return;
+        }
+        task.DownloadedValid += pieceBuf.Length;
+
+        task.AnnounceDownloadedPiece(piece);
+
+        var peer = connections.First(c => c.Peer == msg.Peer);
+        await task.SupplyPiecesToPeer(peer, 1);
+    }
+    internal static async Task Handle(this CloseConnection msg, TorrentTask task, List<PeerConnection> connections)
+    {
+        foreach (var idx in msg.WasDownloading)
+        {
+            task._downloadingPieces.Remove(idx);
+        }
+        connections.RemoveAll(conn => conn.Peer == msg.Peer);
+        Console.WriteLine($"closed connection with {msg.Peer}");
+    }
+    internal static async Task Handle(this IPeerCtrlMsg msg, TorrentTask task, List<PeerConnection> connections)
+    {
+        switch (msg)
+        {
+            case NewPeer np:
+                await np.Handle(task, connections);
+                break;
+            case RequestPieces rp:
+                await rp.Handle(task, connections);
+                break;
+            case DownloadedChunk dc:
+                await dc.Handle(task, connections);
+                break;
+            case CloseConnection cc:
+                await cc.Handle(task, connections);
+                break;
+            default:
+                throw new NotImplementedException($"Handling of peer message {msg} is not implemented");
+        }
     }
 }
