@@ -24,19 +24,27 @@ public class CloseConnection(Peer peer, List<int> wasDownloading) : IPeerCtrlMsg
 	public Peer Peer { get; } = peer;
 	public List<int> WasDownloading { get; } = wasDownloading;
 }
-public class HavePiece(Peer peer, int idx) : IPeerCtrlMsg
-{
-	public Peer Peer { get; } = peer;
-	public int Idx { get; } = idx;
-}
 public class RequestPieces(Peer peer, int count) : IPeerCtrlMsg
 {
 	public Peer Peer { get; } = peer;
 	public int Count { get; } = count;
+}
+public class RequestChunk(Peer peer, Request request) : IPeerCtrlMsg
+{
+	public Peer Peer { get; } = peer;
+	public Request Request { get; } = request;
 }
 
 public class SupplyPieces(IEnumerable<int> pieces) : ITaskCtrlMsg
 {
 	public IEnumerable<int> Pieces { get; } = pieces;
 }
+public class SupplyChunk(Data.Chunk chunk) : ITaskCtrlMsg
+{
+	public Data.Chunk Chunk { get; } = chunk;
+}
 public class FinishConnection : ITaskCtrlMsg {}
+public class HavePiece(int idx) : ITaskCtrlMsg
+{
+	public int Idx { get; } = idx;
+}

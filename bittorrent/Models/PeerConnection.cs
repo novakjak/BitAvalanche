@@ -18,6 +18,7 @@ namespace bittorrent.Models;
 public class PeerConnection
 {
     public const int CHUNK_SIZE = 16384; // 2^14 aka 16 kiB
+    public const int MAXIMUM_CHUNK_SIZE = 131072 ; // 2^17 aka 128 kiB
     public const int MAX_DOWNLOADING_PIECES = 20;
 
     public Peer Peer { get; }
@@ -36,6 +37,8 @@ public class PeerConnection
     private List<IPeerMessage> _queuedMsgs = new();
     private Lock _queueLock = new();
     private List<int> _piecesToDownload = new();
+    private List<Request> _requestedChunks = new();
+    private List<Cancel> _cancelledChunks = new();
     private Task? _listenerTask;
     private Task? _controlTask;
     private CancellationTokenSource _cancellation;
@@ -124,7 +127,6 @@ public class PeerConnection
 
     public async Task Stop()
     {
-        Console.WriteLine("stopping");
         _listenerTask = null;
         _controlTask = null;
         _client.Close();
@@ -160,7 +162,6 @@ public class PeerConnection
             await stream.ReadExactlyAsync(msgBuf, 4, len, _cancellation.Token);
             var msg = PeerMessageParser.Parse(msgBuf);
             if (msg is null) continue;
-            Console.WriteLine(msg);
             await HandleMessage(msg);
         }
     }
@@ -212,21 +213,28 @@ public class PeerConnection
             var msg = await PeerChannel.Reader.ReadAsync(_cancellation.Token);
             switch (msg)
             {
-                case SupplyPieces sp: {
+                case SupplyPieces sp:
                     foreach (var pieceIdx in sp.Pieces)
                     {
                         await RequestPiece(pieceIdx);
                     }
                     break;
-                }
-                case HavePiece hp: {
+                case SupplyChunk sc:
+                    Predicate<Cancel> isCancelled = c =>
+                        c.Idx == sc.Chunk.Idx
+                        && c.Begin == sc.Chunk.Begin
+                        && c.Length == sc.Chunk.Data.Count();
+                    var cancelled = _cancelledChunks.RemoveAll(isCancelled);
+                    if (cancelled > 0)
+                        break;
+                    await SendMessages([new Piece(sc.Chunk)]);
+                    break;
+                case HavePiece hp:
                     await SendMessages([new Have((UInt32)hp.Idx)]);
                     break;
-                }
-                case FinishConnection fc: {
+                case FinishConnection fc:
                     await Stop();
                     return;
-                }
             }
         }
         await Stop();
@@ -250,14 +258,12 @@ public class PeerConnection
     {
         switch (msg)
         {
-            case KeepAlive ka: {
+            case KeepAlive ka:
                 break;
-            }
-            case Choke c: {
+            case Choke c:
                 AmChoked = true;
                 break;
-            }
-            case Unchoke uc: {
+            case Unchoke uc:
                 AmChoked = false;
                 // Attempt to clear queued request messages.
                 if (_queuedMsgs.Count > 0)
@@ -265,49 +271,49 @@ public class PeerConnection
                     await SendMessages(new());
                 }
                 break;
-            }
-            case Interested i: {
+            case Interested i:
                 IsInterested = true;
                 break;
-            }
-            case NotInterested ni: {
+            case NotInterested ni:
                 IsInterested = false;
                 break;
-            }
-            case Have h: {
+            case Have h:
                 if (h.Piece >= PeerHas.Length)
-                {
                     break;
-                }
                 PeerHas[(int)h.Piece] = true;
-                await _ctrlChannel.Writer.WriteAsync(new HavePiece(Peer, (int)h.Piece), _cancellation.Token);
+                await AskForPieces();
                 break;
-            }
-            case Bitfield b: {
+            case Bitfield b:
                 b.Data.Length = Torrent.NumberOfPieces;
                 PeerHas = b.Data;
-                if (_piecesToDownload.Count() < PeerConnection.MAX_DOWNLOADING_PIECES)
-                {
-                    await _ctrlChannel.Writer.WriteAsync(
-                        new RequestPieces(Peer, PeerConnection.MAX_DOWNLOADING_PIECES - _piecesToDownload.Count()),
-                        _cancellation.Token
-                    );
-                }
+                await AskForPieces();
                 break;
-            }
-            case Request r: {
-                // TODO: implement
+            case Request r:
+                if (r.Length > PeerConnection.MAXIMUM_CHUNK_SIZE)
+                    break;
+                if (_requestedChunks.Any(c => c.Equals(r)))
+                    break;
+                _requestedChunks.Add(r);
+                await _ctrlChannel.Writer.WriteAsync(new RequestChunk(Peer, r), _cancellation.Token);
                 break;
-            }
-            case Piece p: {
+            case Piece p:
                 await _ctrlChannel.Writer.WriteAsync(new DownloadedChunk(Peer, p.Chunk), _cancellation.Token);
                 break;
-            }
-            case Cancel cancel: {
-                // TODO: implement
+            case Cancel cancel:
+                _requestedChunks.RemoveAll(c => c.Equals(cancel));
+                _cancelledChunks.Add(cancel);
                 break;
-            }
         }
+    }
+
+    private async Task AskForPieces()
+    {
+        if (_piecesToDownload.Count() >= PeerConnection.MAX_DOWNLOADING_PIECES)
+            return;
+        await _ctrlChannel.Writer.WriteAsync(
+            new RequestPieces(Peer, PeerConnection.MAX_DOWNLOADING_PIECES - _piecesToDownload.Count()),
+            _cancellation.Token
+        );
     }
 
     private async Task PerformHandshake()
