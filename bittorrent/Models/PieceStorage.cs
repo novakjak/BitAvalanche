@@ -29,7 +29,7 @@ public sealed class PieceStorage
 
     public async Task StorePieceAsync(Data.Piece piece)
     {
-        Console.WriteLine($"Storing {piece.Idx}");
+        Logger.Info($"Storing {piece.Idx}");
         if (Torrent.File is not null)
             await StorePieceAsync(Torrent.File, piece);
         else
@@ -101,7 +101,7 @@ public sealed class PieceStorage
             }
         } catch (Exception e)
         {
-            Console.WriteLine(e.Message);
+            Logger.Warn(e.Message);
             return;
         }
         _file = file;

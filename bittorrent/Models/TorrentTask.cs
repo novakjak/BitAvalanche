@@ -154,18 +154,18 @@ public class TorrentTask
             BString failure;
             if ((failure = body.Get<BString>(new BString("failure reason"))) is not null)
             {
-                Console.WriteLine($"Communication with tracker failed: {failure.ToString()}");
+                Logger.Error($"Communication with tracker failed: {failure.ToString()}");
                 return;
             }
             if (!response.IsSuccessStatusCode)
             {
-                Console.WriteLine("Could not get peers from tracker");
+                Logger.Error("Could not get peers from tracker");
                 return;
             }
         }
         catch (Exception e)
         {
-            Console.WriteLine(e.Message);
+            Logger.Warn(e.Message);
             return;
         }
         foreach (var peer in ParsePeers(body["peers"]))
@@ -194,7 +194,7 @@ public class TorrentTask
     {
         if (task.IsFaulted)
         {
-            Console.WriteLine(task.Exception);
+            Logger.Warn(task.Exception.Message);
             return;
         }
         await task;
@@ -243,7 +243,7 @@ public class TorrentTask
 
     ~TorrentTask()
     {
-        Console.WriteLine("Disposed task");
+        Logger.Debug("Disposed task");
         _cancellation.Cancel();
         client.Dispose();
         _mainCtrlChannel.Writer.TryComplete();
@@ -258,7 +258,7 @@ file static class CtrlMessageExtensions {
             return;
         connections.Add(msg.PeerConnection);
         await task.SupplyPiecesToPeer(msg.PeerConnection, PeerConnection.MAX_DOWNLOADING_PIECES);
-        Console.WriteLine($"Added Connection: {msg.Peer}");
+        Logger.Debug($"Added Connection: {msg.Peer}");
     }
     internal static async Task Handle(this RequestPieces msg, TorrentTask task, List<PeerConnection> connections)
     {
@@ -309,7 +309,7 @@ file static class CtrlMessageExtensions {
         }
         catch (IOException e)
         {
-            Console.WriteLine($"Could not write to file: {e.Message}");
+            Logger.Warn($"Could not write to file: {e.Message}");
             return;
         }
         task.DownloadedValid += pieceBuf.Length;
@@ -326,7 +326,7 @@ file static class CtrlMessageExtensions {
             task._downloadingPieces.Remove(idx);
         }
         connections.RemoveAll(conn => conn.Peer == msg.Peer);
-        Console.WriteLine($"closed connection with {msg.Peer}");
+        Logger.Debug($"closed connection with {msg.Peer}");
     }
     internal static async Task Handle(this IPeerCtrlMsg msg, TorrentTask task, List<PeerConnection> connections)
     {

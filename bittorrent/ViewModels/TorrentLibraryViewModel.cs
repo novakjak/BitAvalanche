@@ -46,6 +46,6 @@ public partial class TorrentLibraryViewModel : ViewModelBase
         if (taskVM is null)
             return;
         taskVM.Task.AddPeer(args.client, args.peer);
-        Console.WriteLine("===== peer connected to us =====");
+        Logger.Info($"Peer {args.peer} connected to client");
     }
 }
