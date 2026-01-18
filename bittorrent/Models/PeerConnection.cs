@@ -348,7 +348,7 @@ public class PeerConnection
 
     ~PeerConnection()
     {
-        Console.WriteLine($"Disposed peer: {Peer}");
+        Logger.Debug($"Disposed peer: {Peer}");
         _client.Dispose();
         PeerChannel.Writer.TryComplete();
         _cancellation.Cancel();
