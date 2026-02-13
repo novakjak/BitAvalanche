@@ -47,7 +47,7 @@ public class TorrentTask : ITorrentTask
     public string PeerId { get; private set; } = Util.GenerateRandomString(20);
     public int PeerCount => _connections.Count();
     public Channel<IPeerCtrlMsg> CtrlChannel { get; } = Channel.CreateUnbounded<IPeerCtrlMsg>();
-    public int Uploaded { get; private set; } = 0;
+    public int Uploaded { get; internal set; } = 0;
     public int Downloaded { get; internal set; } = 0;
     public int DownloadedValid { get; internal set; } = 0;
     public BitArray DownloadedPieces { get; private set; }
@@ -197,7 +197,6 @@ public class TorrentTask : ITorrentTask
 
     ~TorrentTask()
     {
-        Logger.Debug("Disposed task");
         _cancellation.Cancel();
         CtrlChannel.Writer.TryComplete();
         _thread?.Dispose();
@@ -211,7 +210,6 @@ file static class CtrlMessageExtensions
         if (connections.Select(pc => pc.Peer).Contains(msg.Peer))
             return;
         connections.Add(msg.PeerConnection);
-        Logger.Debug($"Added Connection: {msg.Peer}");
         task.RaisePeerCountChanged();
     }
     internal static async Task Handle(this RequestPieces msg, TorrentTask task, List<PeerConnection> connections)
@@ -279,11 +277,13 @@ file static class CtrlMessageExtensions
     }
     internal static async Task Handle(this CloseConnection msg, TorrentTask task, List<PeerConnection> connections)
     {
-        foreach (var idx in msg.WasDownloading)
-            task._downloadingPieces.Remove(idx);
         connections.RemoveAll(conn => conn.Peer == msg.Peer);
         task.RaisePeerCountChanged();
-        Logger.Debug($"closed connection with {msg.Peer}");
+    }
+    internal static async Task Handle(this ReclaimPieces msg, TorrentTask task, List<PeerConnection> connections)
+    {
+        foreach (var idx in msg.WasDownloading)
+            task._downloadingPieces.Remove(idx);
     }
     internal static async Task Handle(this IPeerCtrlMsg msg, TorrentTask task, List<PeerConnection> connections)
     {
@@ -300,6 +300,12 @@ file static class CtrlMessageExtensions
                 break;
             case CloseConnection cc:
                 await cc.Handle(task, connections);
+                break;
+            case ReclaimPieces reclaim:
+                await reclaim.Handle(task, connections);
+                break;
+            case Uploaded up:
+                task.Uploaded += up.Amount;
                 break;
             default:
                 throw new NotImplementedException($"Handling of peer message {msg} is not implemented");

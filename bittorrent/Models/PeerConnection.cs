@@ -39,7 +39,6 @@ public class PeerConnection
     private readonly List<int> _piecesToDownload = new();
     private readonly List<Request> _requestedChunks = new();
     private readonly List<Request> _peerRequestedChunks = new();
-    private readonly List<Cancel> _peerCancelledChunks = new();
     private Task? _listenerTask;
     private Task? _controlTask;
     private readonly CancellationTokenSource _cancellation = new();
@@ -117,7 +116,10 @@ public class PeerConnection
                 if (msg is SupplyPieces pcs)
                     toDownload.AddRange(pcs.Pieces);
             }
-            Parent.CtrlChannel.Writer.TryWrite(new CloseConnection(Peer, [.. _piecesToDownload, .. toDownload]));
+            List<int> reclaimed = [.. _piecesToDownload, .. toDownload];
+            if (reclaimed.Count() > 0)
+                Parent.CtrlChannel.Writer.TryWrite(new ReclaimPieces(Peer, reclaimed));
+            Parent.CtrlChannel.Writer.TryWrite(new CloseConnection(Peer));
         }
         catch { } // Do nothing if it's not possible to write
         _piecesToDownload.Clear();
@@ -158,6 +160,7 @@ public class PeerConnection
     {
         var stream = _client.GetStream();
         var buf = new List<Byte>();
+        int uploaded = 0;
         lock (_queueLock)
         {
             _queuedMsgs.AddRange(messages);
@@ -185,6 +188,9 @@ public class PeerConnection
                             continue;
                         }
                         break;
+                    case Piece p:
+                        uploaded += p.Chunk.Data.Length;
+                        break;
                 }
                 buf.AddRange(message.ToBytes());
             }
@@ -192,6 +198,11 @@ public class PeerConnection
             _queuedMsgs.AddRange(unsentMsgs);
         }
         await stream.WriteAsync(buf.ToArray(), _cancellation.Token);
+        if (uploaded > 0)
+        {
+            await Parent.CtrlChannel.Writer
+                .WriteAsync(new Uploaded(Peer, uploaded));
+        }
     }
 
     private async Task Control()
@@ -203,6 +214,8 @@ public class PeerConnection
             switch (msg)
             {
                 case SupplyPieces sp:
+                    if (sp.Pieces.Count() > 0)
+                        await SendInterested();
                     foreach (var pieceIdx in sp.Pieces)
                     {
                         if (_piecesToDownload.Contains(pieceIdx))
@@ -212,16 +225,20 @@ public class PeerConnection
                     }
                     break;
                 case SupplyChunk sc:
-                    Predicate<Cancel> isCancelled = c =>
+                {
+                    Predicate<Request> isRequested = c =>
                         c.Idx == sc.Chunk.Idx
                         && c.Begin == sc.Chunk.Begin
                         && c.Length == sc.Chunk.Data.Count();
-                    var cancelled = _peerCancelledChunks.RemoveAll(isCancelled);
-                    if (cancelled > 0)
+                    var requested = _peerRequestedChunks.RemoveAll(isRequested);
+                    // Skip sending if chunk request was cancelled
+                    if (requested == 0)
                         break;
                     await SendMessages([new Piece(sc.Chunk)]);
                     break;
+                }
                 case HavePiece hp:
+                {
                     var msgs = new List<IPeerMessage> { new Have((UInt32)hp.Idx) };
                     foreach (var c in _requestedChunks)
                     {
@@ -234,6 +251,7 @@ public class PeerConnection
                     var cancelledCount = _piecesToDownload.RemoveAll(p => p == hp.Idx);
                     await Parent.CtrlChannel.Writer.WriteAsync(new RequestPieces(Peer, cancelledCount), _cancellation.Token);
                     break;
+                }
                 case FinishConnection fc:
                     Stop();
                     return;
@@ -270,7 +288,10 @@ public class PeerConnection
             case KeepAlive ka:
                 break;
             case Choke c:
-                // TODO: clear requested chunks
+                // Make pieces available to download for other peers
+                await Parent.CtrlChannel.Writer
+                    .WriteAsync(new ReclaimPieces(Peer, new List<int>(_piecesToDownload)));
+                _piecesToDownload.Clear();
                 AmChoked = true;
                 break;
             case Unchoke uc:
@@ -280,13 +301,15 @@ public class PeerConnection
                 {
                     await SendMessages(new List<IPeerMessage>());
                 }
+                await AskForPieces();
                 break;
             case Interested i:
-                // TODO: send unchoke
+                if (IsChoked)
+                    await SendMessages([new Unchoke()]);
                 IsInterested = true;
                 break;
             case NotInterested ni:
-                // TODO: clear peer requested chunks
+                _peerRequestedChunks.Clear();
                 IsInterested = false;
                 break;
             case Have h:
@@ -314,7 +337,6 @@ public class PeerConnection
                 break;
             case Cancel cancel:
                 _peerRequestedChunks.RemoveAll(c => c.Equals(cancel));
-                _peerCancelledChunks.Add(cancel);
                 break;
         }
     }
@@ -334,14 +356,14 @@ public class PeerConnection
         await SendHandshake();
         await ReceiveHandshake();
 
-        // var msgs = new List<IPeerMessage>();
-        // if (!Parent.IsCompleted)
-        //     msgs.Add(new Interested());
-        // if (Parent.DownloadedPieces.HasAnySet())
-        //     msgs.Add(new Bitfield(Parent.DownloadedPieces));
+        if (Parent.DownloadedPieces.HasAnySet())
+            await SendMessages([new Bitfield(Parent.DownloadedPieces)]);
+    }
 
-        // if (msgs.Count() > 0)
-        //     await SendMessages(msgs);
+    private async Task SendInterested()
+    {
+        if (!AmInterested && !Parent.IsCompleted)
+            await SendMessages([new Interested()]);
     }
 
     private async Task SendHandshake()

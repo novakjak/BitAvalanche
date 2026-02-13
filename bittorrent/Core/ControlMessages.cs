@@ -20,7 +20,11 @@ public class DownloadedChunk(Peer peer, Data.Chunk chunk) : IPeerCtrlMsg
     public Peer Peer { get; } = peer;
     public Data.Chunk Chunk { get; } = chunk;
 }
-public class CloseConnection(Peer peer, List<int> wasDownloading) : IPeerCtrlMsg
+public class CloseConnection(Peer peer) : IPeerCtrlMsg
+{
+    public Peer Peer { get; } = peer;
+}
+public class ReclaimPieces(Peer peer, List<int> wasDownloading) : IPeerCtrlMsg
 {
     public Peer Peer { get; } = peer;
     public List<int> WasDownloading { get; } = wasDownloading;
@@ -34,6 +38,11 @@ public class RequestChunk(Peer peer, Request request) : IPeerCtrlMsg
 {
     public Peer Peer { get; } = peer;
     public Request Request { get; } = request;
+}
+public class Uploaded(Peer peer, int amount) : IPeerCtrlMsg
+{
+    public Peer Peer { get; } = peer;
+    public int Amount { get; } = amount;
 }
 
 public class SupplyPieces(IEnumerable<int> pieces) : ITaskCtrlMsg
