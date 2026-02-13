@@ -19,6 +19,8 @@ namespace bittorrent.Models;
 
 public class TrackerAnnouncer
 {
+    public const int DEFAULT_TIMEOUT = 3 * 60 * 1000;
+
     public TorrentTask Task { get; set; }
 
     public event EventHandler<IEnumerable<Peer>>? ReceivedPeers;
@@ -35,12 +37,12 @@ public class TrackerAnnouncer
     public TrackerAnnouncer(TorrentTask task)
     {
         Task = task;
-        _timer = new Timer(async (_) => await Announce(), null, 0, _interval ?? Timeout.Infinite);
+        _timer = new Timer(async (_) => await Announce(), null, Timeout.Infinite, _interval ?? DEFAULT_TIMEOUT);
     }
 
     public void Start()
     {
-        _timer.Change(0, _interval ?? Timeout.Infinite);
+        _timer.Change(0, _interval ?? DEFAULT_TIMEOUT);
     }
 
     public async Task Stop()
@@ -96,6 +98,7 @@ public class TrackerAnnouncer
                 Logger.Error($"Communication with tracker failed: {failure.ToString()}");
                 return false;
             }
+            // TODO: handle min interval as well
             BNumber? newInterval = body.Get<BNumber>("interval");
             if (_interval is null && newInterval is null)
             {

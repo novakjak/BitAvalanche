@@ -30,7 +30,6 @@ public sealed class PieceStorage
 
     public async Task StorePieceAsync(Data.Piece piece)
     {
-        Logger.Info($"Storing {piece.Idx}");
         if (Torrent.File is not null)
             await StorePieceAsync(Torrent.File, piece);
         else

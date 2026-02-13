@@ -51,10 +51,16 @@ public class TorrentTaskTests
         task.Start();
         var stream = AddTestPeer();
 
-        var msgBuf = new byte[17];
+        var msgBuf = new byte[5];
         var nread = stream.Read(msgBuf, 0, msgBuf.Length);
         Assert.Equal(msgBuf.Length, nread);
         var msg = PeerMessageParser.Parse(msgBuf);
+        Assert.IsType<Interested>(msg);
+
+        msgBuf = new byte[17];
+        nread = stream.Read(msgBuf, 0, msgBuf.Length);
+        Assert.Equal(msgBuf.Length, nread);
+        msg = PeerMessageParser.Parse(msgBuf);
         Assert.IsType<Request>(msg);
         var request = (Request)msg;
         Assert.Equal(0u, request.Idx);
@@ -72,9 +78,16 @@ public class TorrentTaskTests
         task.DownloadedPiece += (_, _) => didDownload = true;
         var stream = AddTestPeer();
 
-        var msgBuf = new byte[17];
-        stream.ReadExactly(msgBuf, 0, msgBuf.Length);
+        var msgBuf = new byte[5];
+        var nread = stream.Read(msgBuf, 0, msgBuf.Length);
+        Assert.Equal(msgBuf.Length, nread);
         var msg = PeerMessageParser.Parse(msgBuf);
+        Assert.IsType<Interested>(msg);
+
+        msgBuf = new byte[17];
+        nread = stream.Read(msgBuf, 0, msgBuf.Length);
+        Assert.Equal(msgBuf.Length, nread);
+        msg = PeerMessageParser.Parse(msgBuf);
         Assert.IsType<Request>(msg);
 
         var piece = new Piece(new Data.Chunk(0, 0, torrentData));

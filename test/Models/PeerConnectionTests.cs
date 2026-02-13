@@ -26,12 +26,9 @@ namespace test.Models;
 public class PeerConnectionTests
 {
     readonly Torrent torrent;
-    readonly byte[] testPeerId;
+    readonly ITorrentTask task;
     readonly byte[] externalPeerId;
-    readonly Channel<IPeerCtrlMsg> ctrlChannel;
     readonly Channel<ITaskCtrlMsg> peerChannel;
-    readonly BitArray haveNone;
-    readonly BitArray haveAll;
     readonly Peer peer;
     readonly IPEndPoint endpoint;
     readonly Stream dataStream;
@@ -43,12 +40,8 @@ public class PeerConnectionTests
     {
         var parser = new BencodeParser();
         torrent = parser.Parse<Torrent>("Resources/torrentData.txt.torrent");
-        testPeerId = Encoding.ASCII.GetBytes(Util.GenerateRandomString(20));
         externalPeerId = Encoding.ASCII.GetBytes(Util.GenerateRandomString(20));
-        ctrlChannel = Channel.CreateUnbounded<IPeerCtrlMsg>();
         peerChannel = Channel.CreateUnbounded<ITaskCtrlMsg>();
-        haveNone = new BitArray(torrent.NumberOfPieces, false);
-        haveAll = new BitArray(torrent.NumberOfPieces, true);
         peer = new Peer(IPAddress.Parse("127.0.0.1"), 1234, externalPeerId);
         endpoint = new IPEndPoint(IPAddress.Parse("127.0.0.1"), 1234);
         dataStream = new MockNetworkStream();
@@ -66,6 +59,8 @@ public class PeerConnectionTests
         peerTokenSource.CancelAfter(5000);
         var handshake = new Handshake(torrent.OriginalInfoHashBytes, peer.PeerId!);
         dataStream.Write(handshake.ToBytes());
+
+        task = new MockTorrentTask(torrent);
     }
 
     [Fact]
@@ -88,31 +83,34 @@ public class PeerConnectionTests
             new Have(0),
             new Piece(1, 2, new byte[] { 0, 1, 2, 3 }),
         };
+        var (conn, handshake) = await ConnectAsync();
+
+        var newpeer = await task.CtrlChannel.Reader.ReadAsync(tokenSource.Token);
+        Assert.IsType<NewPeer>(newpeer);
+
+        // First request at the start of the peer connection
+        var requestpieces = await task.CtrlChannel.Reader.ReadAsync(tokenSource.Token);
+        Assert.IsType<RequestPieces>(requestpieces);
+        Assert.Equal(PeerConnection.MAX_DOWNLOADING_PIECES, ((RequestPieces)requestpieces).Count);
+        Assert.Equal(peer, requestpieces.Peer);
+
         foreach (var msg in messages)
         {
             dataStream.Write(msg.ToBytes());
         }
 
-        var (conn, handshake) = await ConnectAsync();
-
-        var newpeer = await ctrlChannel.Reader.ReadAsync(tokenSource.Token);
-        Assert.IsType<NewPeer>(newpeer);
-
-        // once from the bitfield message
-        var requestpieces = await ctrlChannel.Reader.ReadAsync(tokenSource.Token);
+        // Second request after receiving Bitfield
+        requestpieces = await task.CtrlChannel.Reader.ReadAsync(tokenSource.Token);
+        Assert.IsType<RequestPieces>(requestpieces);
+        Assert.Equal(PeerConnection.MAX_DOWNLOADING_PIECES, ((RequestPieces)requestpieces).Count);
+        Assert.Equal(peer, requestpieces.Peer);
+        // Third request after receiving Have
+        requestpieces = await task.CtrlChannel.Reader.ReadAsync(tokenSource.Token);
         Assert.IsType<RequestPieces>(requestpieces);
         Assert.Equal(PeerConnection.MAX_DOWNLOADING_PIECES, ((RequestPieces)requestpieces).Count);
         Assert.Equal(peer, requestpieces.Peer);
 
-        // second time from the have message
-        requestpieces = await ctrlChannel.Reader.ReadAsync(tokenSource.Token);
-        Assert.IsType<RequestPieces>(requestpieces);
-        Assert.Equal(PeerConnection.MAX_DOWNLOADING_PIECES, ((RequestPieces)requestpieces).Count);
-        Assert.Equal(peer, requestpieces.Peer);
-
-        var request = await ctrlChannel.Reader.ReadAsync(tokenSource.Token);
-        Assert.IsType<RequestPieces>(request);
-        var chunk = await ctrlChannel.Reader.ReadAsync(tokenSource.Token);
+        var chunk = await task.CtrlChannel.Reader.ReadAsync(tokenSource.Token);
         Assert.IsType<DownloadedChunk>(chunk);
         Assert.Equal(peer, chunk.Peer);
         var chunkMsg = (DownloadedChunk)chunk;
@@ -163,11 +161,9 @@ public class PeerConnectionTests
     {
         dataStream.ReadTimeout = 0;
         var (conn, handshake) = await ConnectAsync();
-        dataStream.Close();
-        var newpeer = await ctrlChannel.Reader.ReadAsync(tokenSource.Token);
+        var newpeer = await task.CtrlChannel.Reader.ReadAsync(tokenSource.Token);
         Assert.IsType<NewPeer>(newpeer);
-        var msgs = ctrlChannel.Reader.ReadAllAsync(tokenSource.Token);
-        Assert.Contains(msgs, msg => msg is RequestPieces);
+        var msgs = task.CtrlChannel.Reader.ReadAllAsync(tokenSource.Token);
         Assert.Contains(msgs, msg => msg is CloseConnection);
         conn.Stop();
     }
@@ -187,14 +183,14 @@ public class PeerConnectionTests
     {
         dataStream.ReadTimeout = 0;
         var (conn, handshake) = await ConnectAsync();
-        ctrlChannel.Writer.Complete();
+        task.CtrlChannel.Writer.Complete();
 
-        while (ctrlChannel.Reader.Count > 0)
+        while (task.CtrlChannel.Reader.Count > 0)
         {
-            await ctrlChannel.Reader.ReadAsync(tokenSource.Token);
+            await task.CtrlChannel.Reader.ReadAsync(tokenSource.Token);
         }
 
-        await ctrlChannel.Reader.Completion.WaitAsync(tokenSource.Token);
+        await task.CtrlChannel.Reader.Completion.WaitAsync(tokenSource.Token);
         await Task.Delay(200, tokenSource.Token); // Wait for PeerConnection to try and read from ctrlChannel
         Assert.False(conn.IsStarted);
         conn.Stop();
@@ -206,13 +202,12 @@ public class PeerConnectionTests
         dataStream.ReadTimeout = 0;
         peerChannel.Writer.Complete();
         var (conn, handshake) = await ConnectAsync();
-        var newpeer = await ctrlChannel.Reader.ReadAsync(tokenSource.Token);
+        var newpeer = await task.CtrlChannel.Reader.ReadAsync(tokenSource.Token);
         Assert.IsType<NewPeer>(newpeer);
 
         await peerChannel.Reader.Completion.WaitAsync(tokenSource.Token);
 
-        var msgs = ctrlChannel.Reader.ReadAllAsync(tokenSource.Token);
-        Assert.Contains(msgs, msg => msg is RequestPieces);
+        var msgs = task.CtrlChannel.Reader.ReadAllAsync(tokenSource.Token);
         Assert.Contains(msgs, msg => msg is CloseConnection);
 
         Assert.False(conn.IsStarted);
@@ -222,17 +217,13 @@ public class PeerConnectionTests
     private async Task<(PeerConnection, Handshake)> ConnectAsync()
     {
         var conn = await PeerConnection.CreateWithClientAsync(
-            mockClient, peer, torrent, testPeerId,
-            ctrlChannel,
-            peerChannel,
-            haveNone,
-            peerTokenSource
+            mockClient, peer, task, peerChannel
         );
         var handshakeBuf = new byte[Handshake.MessageLength];
         var nread = dataStream.Read(handshakeBuf, 0, handshakeBuf.Length);
         Assert.Equal(Handshake.MessageLength, nread);
         var handshakeReceived = Handshake.Parse(handshakeBuf);
-        Assert.Equal(handshakeReceived.PeerId, testPeerId);
+        Assert.Equal(handshakeReceived.PeerId, Encoding.UTF8.GetBytes(task.PeerId));
         return (conn, handshakeReceived);
     }
 

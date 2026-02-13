@@ -23,12 +23,10 @@ public class PeerConnection
     public const int MAX_DOWNLOADING_PIECES = 20;
     public const int TIMEOUT = 2 * 60 * 1000;
 
+    public ITorrentTask Parent { get; }
     public Peer Peer { get; }
-    public Torrent Torrent { get; }
-    public byte[] PeerId { get; }
     public Channel<ITaskCtrlMsg> PeerChannel { get; }
     public BitArray PeerHas { get; private set; }
-    public BitArray Have { get; set; }
     public bool AmChoked { get; private set; } = true;
     public bool IsChoked { get; private set; } = true;
     public bool AmInterested { get; private set; } = false;
@@ -41,61 +39,40 @@ public class PeerConnection
     private readonly List<int> _piecesToDownload = new();
     private readonly List<Request> _requestedChunks = new();
     private readonly List<Request> _peerRequestedChunks = new();
-    private readonly List<Cancel> _peerCancelledChunks = new();
     private Task? _listenerTask;
     private Task? _controlTask;
-    private readonly CancellationTokenSource _cancellation;
-    private readonly Channel<IPeerCtrlMsg> _ctrlChannel;
+    private readonly CancellationTokenSource _cancellation = new();
 
 
     private PeerConnection(
-        Peer peer, Torrent torrent, byte[] peerId,
-        Channel<IPeerCtrlMsg> ctrlChannel,
-        Channel<ITaskCtrlMsg> peerChannel,
-        BitArray have, CancellationTokenSource cancellationSource
+        Peer peer, ITorrentTask task,
+        Channel<ITaskCtrlMsg> peerChannel
     )
     {
-        if (peerId.Length != 20)
-        {
-            throw new ArgumentException("Peer id is of incorrect length.");
-        }
-
         Peer = peer;
-        Torrent = torrent;
-        PeerId = peerId;
+        Parent = task;
         PeerChannel = peerChannel;
-        PeerHas = new BitArray(Torrent.NumberOfPieces);
-        Have = have;
-        _ctrlChannel = ctrlChannel;
-        _cancellation = cancellationSource;
+        PeerHas = new BitArray(Parent.Torrent.NumberOfPieces);
     }
 
     public static async Task<PeerConnection> CreateAsync(
-        Peer peer, Torrent torrent, byte[] peerId,
-        Channel<IPeerCtrlMsg> ctrlChannel,
-        Channel<ITaskCtrlMsg> peerChannel,
-        BitArray have,
-        CancellationTokenSource cancellationSource
+        Peer peer, ITorrentTask task,
+        Channel<ITaskCtrlMsg> peerChannel
     )
     {
         return await PeerConnection.CreateWithClientAsync(
             new NetworkClient(),
-            peer, torrent, peerId,
-            ctrlChannel,
-            peerChannel,
-            have,
-            cancellationSource
+            peer, task,
+            peerChannel
         );
     }
 
     public static async Task<PeerConnection> CreateWithClientAsync(
-        INetworkClient client, Peer peer, Torrent torrent, byte[] peerId,
-        Channel<IPeerCtrlMsg> ctrlChannel,
-        Channel<ITaskCtrlMsg> peerChannel,
-        BitArray have, CancellationTokenSource cancellationSource
+        INetworkClient client, Peer peer, ITorrentTask task,
+        Channel<ITaskCtrlMsg> peerChannel
     )
     {
-        var pc = new PeerConnection(peer, torrent, peerId, ctrlChannel, peerChannel, have, cancellationSource);
+        var pc = new PeerConnection(peer, task, peerChannel);
         pc._client = client;
         await pc._client.ConnectAsync(pc.Peer.Ip, pc.Peer.Port, pc._cancellation.Token);
         await pc.PerformHandshake();
@@ -104,14 +81,11 @@ public class PeerConnection
     }
 
     public static async Task<PeerConnection> CreateAndFinishHandshakeAsync(
-        INetworkClient client, Peer peer, Torrent torrent, byte[] peerId,
-        Channel<IPeerCtrlMsg> ctrlChannel,
-        Channel<ITaskCtrlMsg> peerChannel,
-        BitArray have,
-        CancellationTokenSource cancellationSource
+        INetworkClient client, Peer peer, ITorrentTask task,
+        Channel<ITaskCtrlMsg> peerChannel
     )
     {
-        var pc = new PeerConnection(peer, torrent, peerId, ctrlChannel, peerChannel, have, cancellationSource);
+        var pc = new PeerConnection(peer, task, peerChannel);
         pc._client = client;
         await pc.SendHandshake();
         await pc.Start();
@@ -122,7 +96,7 @@ public class PeerConnection
     {
         _listenerTask = Task.Run(ListenOnMessages, _cancellation.Token).ContinueWith(StopOnException);
         _controlTask = Task.Run(Control, _cancellation.Token).ContinueWith(StopOnException);
-        await _ctrlChannel.Writer
+        await Parent.CtrlChannel.Writer
             .WriteAsync(new NewPeer(this), _cancellation.Token)
             .AsTask()
             .ContinueWith(StopOnException);
@@ -142,7 +116,10 @@ public class PeerConnection
                 if (msg is SupplyPieces pcs)
                     toDownload.AddRange(pcs.Pieces);
             }
-            _ctrlChannel.Writer.TryWrite(new CloseConnection(Peer, [.. _piecesToDownload, .. toDownload]));
+            List<int> reclaimed = [.. _piecesToDownload, .. toDownload];
+            if (reclaimed.Count() > 0)
+                Parent.CtrlChannel.Writer.TryWrite(new ReclaimPieces(Peer, reclaimed));
+            Parent.CtrlChannel.Writer.TryWrite(new CloseConnection(Peer));
         }
         catch { } // Do nothing if it's not possible to write
         _piecesToDownload.Clear();
@@ -183,6 +160,7 @@ public class PeerConnection
     {
         var stream = _client.GetStream();
         var buf = new List<Byte>();
+        int uploaded = 0;
         lock (_queueLock)
         {
             _queuedMsgs.AddRange(messages);
@@ -210,6 +188,9 @@ public class PeerConnection
                             continue;
                         }
                         break;
+                    case Piece p:
+                        uploaded += p.Chunk.Data.Length;
+                        break;
                 }
                 buf.AddRange(message.ToBytes());
             }
@@ -217,6 +198,11 @@ public class PeerConnection
             _queuedMsgs.AddRange(unsentMsgs);
         }
         await stream.WriteAsync(buf.ToArray(), _cancellation.Token);
+        if (uploaded > 0)
+        {
+            await Parent.CtrlChannel.Writer
+                .WriteAsync(new Uploaded(Peer, uploaded));
+        }
     }
 
     private async Task Control()
@@ -228,6 +214,8 @@ public class PeerConnection
             switch (msg)
             {
                 case SupplyPieces sp:
+                    if (sp.Pieces.Count() > 0)
+                        await SendInterested();
                     foreach (var pieceIdx in sp.Pieces)
                     {
                         if (_piecesToDownload.Contains(pieceIdx))
@@ -237,16 +225,20 @@ public class PeerConnection
                     }
                     break;
                 case SupplyChunk sc:
-                    Predicate<Cancel> isCancelled = c =>
+                {
+                    Predicate<Request> isRequested = c =>
                         c.Idx == sc.Chunk.Idx
                         && c.Begin == sc.Chunk.Begin
                         && c.Length == sc.Chunk.Data.Count();
-                    var cancelled = _peerCancelledChunks.RemoveAll(isCancelled);
-                    if (cancelled > 0)
+                    var requested = _peerRequestedChunks.RemoveAll(isRequested);
+                    // Skip sending if chunk request was cancelled
+                    if (requested == 0)
                         break;
                     await SendMessages([new Piece(sc.Chunk)]);
                     break;
+                }
                 case HavePiece hp:
+                {
                     var msgs = new List<IPeerMessage> { new Have((UInt32)hp.Idx) };
                     foreach (var c in _requestedChunks)
                     {
@@ -257,8 +249,9 @@ public class PeerConnection
 
                     _requestedChunks.RemoveAll(c => c.Idx == hp.Idx);
                     var cancelledCount = _piecesToDownload.RemoveAll(p => p == hp.Idx);
-                    await _ctrlChannel.Writer.WriteAsync(new RequestPieces(Peer, cancelledCount), _cancellation.Token);
+                    await Parent.CtrlChannel.Writer.WriteAsync(new RequestPieces(Peer, cancelledCount), _cancellation.Token);
                     break;
+                }
                 case FinishConnection fc:
                     Stop();
                     return;
@@ -270,7 +263,7 @@ public class PeerConnection
     private async Task RequestPiece(int piece)
     {
         var rng = new Random();
-        var size = PieceStorage.GetPieceLength(Torrent, piece);
+        var size = PieceStorage.GetPieceLength(Parent.Torrent, piece);
         var msgs = new List<IPeerMessage>();
         for (int off = 0; off < size; off += CHUNK_SIZE)
         {
@@ -295,6 +288,10 @@ public class PeerConnection
             case KeepAlive ka:
                 break;
             case Choke c:
+                // Make pieces available to download for other peers
+                await Parent.CtrlChannel.Writer
+                    .WriteAsync(new ReclaimPieces(Peer, new List<int>(_piecesToDownload)));
+                _piecesToDownload.Clear();
                 AmChoked = true;
                 break;
             case Unchoke uc:
@@ -304,11 +301,15 @@ public class PeerConnection
                 {
                     await SendMessages(new List<IPeerMessage>());
                 }
+                await AskForPieces();
                 break;
             case Interested i:
+                if (IsChoked)
+                    await SendMessages([new Unchoke()]);
                 IsInterested = true;
                 break;
             case NotInterested ni:
+                _peerRequestedChunks.Clear();
                 IsInterested = false;
                 break;
             case Have h:
@@ -318,7 +319,7 @@ public class PeerConnection
                 await AskForPieces();
                 break;
             case Bitfield b:
-                b.Data.Length = Torrent.NumberOfPieces;
+                b.Data.Length = Parent.Torrent.NumberOfPieces;
                 PeerHas = b.Data;
                 await AskForPieces();
                 break;
@@ -328,15 +329,14 @@ public class PeerConnection
                 if (_peerRequestedChunks.Any(c => c.Equals(r)))
                     break;
                 _peerRequestedChunks.Add(r);
-                await _ctrlChannel.Writer.WriteAsync(new RequestChunk(Peer, r), _cancellation.Token);
+                await Parent.CtrlChannel.Writer.WriteAsync(new RequestChunk(Peer, r), _cancellation.Token);
                 break;
             case Piece p:
                 _requestedChunks.RemoveAll(c => c.Idx == p.Chunk.Idx && c.Begin == p.Chunk.Begin);
-                await _ctrlChannel.Writer.WriteAsync(new DownloadedChunk(Peer, p.Chunk), _cancellation.Token);
+                await Parent.CtrlChannel.Writer.WriteAsync(new DownloadedChunk(Peer, p.Chunk), _cancellation.Token);
                 break;
             case Cancel cancel:
                 _peerRequestedChunks.RemoveAll(c => c.Equals(cancel));
-                _peerCancelledChunks.Add(cancel);
                 break;
         }
     }
@@ -345,7 +345,7 @@ public class PeerConnection
     {
         if (_piecesToDownload.Count() >= PeerConnection.MAX_DOWNLOADING_PIECES)
             return;
-        await _ctrlChannel.Writer.WriteAsync(
+        await Parent.CtrlChannel.Writer.WriteAsync(
             new RequestPieces(Peer, PeerConnection.MAX_DOWNLOADING_PIECES - _piecesToDownload.Count()),
             _cancellation.Token
         );
@@ -355,13 +355,24 @@ public class PeerConnection
     {
         await SendHandshake();
         await ReceiveHandshake();
-        // TODO: send bitfield and interested if the whole torrent is not downloaded yet
+
+        if (Parent.DownloadedPieces.HasAnySet())
+            await SendMessages([new Bitfield(Parent.DownloadedPieces)]);
+    }
+
+    private async Task SendInterested()
+    {
+        if (!AmInterested && !Parent.IsCompleted)
+            await SendMessages([new Interested()]);
     }
 
     private async Task SendHandshake()
     {
         var stream = _client.GetStream();
-        var handshake = new Handshake(Torrent.OriginalInfoHashBytes, PeerId);
+        var handshake = new Handshake(
+            Parent.Torrent.OriginalInfoHashBytes,
+            Encoding.UTF8.GetBytes(Parent.PeerId)
+        );
         await stream.WriteAsync(handshake.ToBytes(), _cancellation.Token);
         await stream.FlushAsync(_cancellation.Token);
     }
@@ -375,7 +386,7 @@ public class PeerConnection
             .ReadExactlyAsync(messageBuf, 0, messageBuf.Length, _cancellation.Token);
         var handshake = Handshake.Parse(messageMem);
 
-        if (!handshake.InfoHash.SequenceEqual(Torrent.OriginalInfoHashBytes))
+        if (!handshake.InfoHash.SequenceEqual(Parent.Torrent.OriginalInfoHashBytes))
             throw new HandShakeException("Info hash received from peer differs from the one sent.");
         if (Peer.PeerId is not null && !handshake.PeerId.SequenceEqual(Peer.PeerId))
             throw new HandShakeException("Peer's id mismatched.");
